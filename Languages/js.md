@@ -37,6 +37,18 @@ Each topic includes: What, Example, Logic, Input, Output.
 - [Arrow Functions](#arrow-functions)
 - [Classes](#classes)
 - [Modules importexport](#modules-importexport)
+- [Iterators & Iterables](#iterators--iterables)
+- [Async Iterators](#async-iterators)
+- [Generators](#generators)
+- [Async Generators](#async-generators)
+- [Symbols](#symbols)
+- [Computed Properties](#computed-properties)
+- [Streams](#streams)
+- [Buffers](#buffers)
+- [HTTP Streaming SSE](#http-streaming-sse)
+- [State Management](#state-management)
+- [Control Flow](#control-flow)
+- [Separation of Concerns](#separation-of-concerns)
 - [Stack vs Heap](#stack-vs-heap)
 - [Garbage Collection](#garbage-collection)
 
@@ -55,6 +67,16 @@ Most asked in interviews:
 - Objects shallow vs deep copy
 - Array methods map filter reduce
 - DOM events: bubbling, capturing, delegation
+
+### System & AI Development Priority:
+- **Async Iterators** (streaming APIs)
+- **Async Generators** (real-time data)
+- **Streams** (data processing)
+- **Closures** (state management)
+- **Event Loop** (async brain)
+- **Symbols** (protocols, hidden keys)
+- **State Management** (agent systems)
+- **Control Flow** (execution patterns)
 
 ---
 
@@ -896,6 +918,477 @@ add(2, 3)
 
 ### Output
 5
+
+## Iterators & Iterables
+
+### What
+Iterators provide interface to iterate through collections. Iterables are objects that can be iterated.
+
+### Example
+```js
+const arr = [1, 2, 3];
+const iterator = arr[Symbol.iterator]();
+
+console.log(iterator.next());
+console.log(iterator.next());
+console.log(iterator.next());
+console.log(iterator.next());
+```
+
+### Logic
+Symbol.iterator returns iterator object with next() method.
+
+### Input
+Array [1, 2, 3]
+
+### Output
+{value: 1, done: false}
+{value: 2, done: false}
+{value: 3, done: false}
+{value: undefined, done: true}
+
+## Async Iterators
+
+### What
+Iterators for async data sources, used with for await...of.
+
+### Example
+```js
+const asyncIterable = {
+  [Symbol.asyncIterator]() {
+    let count = 0;
+    return {
+      async next() {
+        if (count < 3) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          return { value: count++, done: false };
+        }
+        return { done: true };
+      }
+    };
+  }
+};
+
+(async () => {
+  for await (const num of asyncIterable) {
+    console.log(num);
+  }
+})();
+```
+
+### Logic
+Async iterator returns Promise from next() method.
+
+### Input
+Async iterable with delayed values
+
+### Output
+0
+1
+2
+
+## Generators
+
+### What
+Functions that can pause and resume execution using yield.
+
+### Example
+```js
+function* countGenerator() {
+  yield 1;
+  yield 2;
+  yield 3;
+}
+
+const gen = countGenerator();
+console.log(gen.next().value);
+console.log(gen.next().value);
+console.log(gen.next().value);
+```
+
+### Logic
+Generator returns iterator, yield pauses and returns value.
+
+### Input
+Call generator and iterate with next()
+
+### Output
+1
+2
+3
+
+## Async Generators
+
+### What
+Generators that can await async operations using yield with await.
+
+### Example
+```js
+async function* fetchData() {
+  yield await Promise.resolve("First");
+  await new Promise(resolve => setTimeout(resolve, 100));
+  yield await Promise.resolve("Second");
+}
+
+(async () => {
+  for await (const data of fetchData()) {
+    console.log(data);
+  }
+})();
+```
+
+### Logic
+Combines generator pause capability with async operations.
+
+### Input
+Async generator with promises and delays
+
+### Output
+First
+Second
+
+## Symbols
+
+### What
+Unique identifiers for object properties, used for hidden keys and protocols.
+
+### Example
+```js
+const idSymbol = Symbol('id');
+const user = {
+  name: 'John',
+  [idSymbol]: 123
+};
+
+console.log(user.name);
+console.log(user[idSymbol]);
+console.log(Object.keys(user));
+console.log(Reflect.ownKeys(user));
+```
+
+### Logic
+Symbols are unique and not enumerable in Object.keys().
+
+### Input
+Object with symbol property
+
+### Output
+John
+123
+['name']
+['name', Symbol(id)]
+
+## Computed Properties
+
+### What
+Dynamic property names using brackets notation.
+
+### Example
+```js
+const key = 'dynamic';
+const obj = {
+  [key]: 'value',
+  ['computed' + 'Key']: 'result'
+};
+
+console.log(obj.dynamic);
+console.log(obj.computedKey);
+```
+
+### Logic
+Expressions inside [] are evaluated to create property names.
+
+### Input
+Dynamic key variables
+
+### Output
+value
+result
+
+## Streams
+
+### What
+Sequences of data that can be processed incrementally.
+
+### Example
+```js
+// Readable stream example (Node.js)
+const { Readable } = require('stream');
+
+const readable = Readable.from(['chunk1', 'chunk2', 'chunk3']);
+
+readable.on('data', (chunk) => {
+  console.log('Received:', chunk.toString());
+});
+
+readable.on('end', () => {
+  console.log('Stream ended');
+});
+```
+
+### Logic
+Streams emit data events as chunks become available.
+
+### Input
+Array converted to readable stream
+
+### Output
+Received: chunk1
+Received: chunk2
+Received: chunk3
+Stream ended
+
+## Buffers
+
+### What
+Fixed-size memory chunks for storing binary data.
+
+### Example
+```js
+// Node.js Buffer
+const buf = Buffer.from('Hello', 'utf8');
+console.log(buf);
+console.log(buf.toString());
+console.log(buf[0]);
+
+const buf2 = Buffer.alloc(4);
+buf2.write('ABCD');
+console.log(buf2.toString());
+```
+
+### Logic
+Buffers store raw bytes, can be converted to/from strings.
+
+### Input
+String 'Hello'
+
+### Output
+<Buffer 48 65 6c 6c 6f>
+Hello
+72
+ABCD
+
+## HTTP Streaming SSE
+
+### What
+Server-Sent Events for real-time data streaming from server to client.
+
+### Example
+```js
+// Server (Node.js)
+const http = require('http');
+
+http.createServer((req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  
+  let count = 0;
+  const interval = setInterval(() => {
+    res.write(`data: Message ${count++}\n\n`);
+    if (count > 3) {
+      clearInterval(interval);
+      res.end();
+    }
+  }, 1000);
+}).listen(3000);
+
+// Client
+const eventSource = new EventSource('http://localhost:3000');
+eventSource.onmessage = (event) => {
+  console.log('Received:', event.data);
+};
+```
+
+### Logic
+SSE uses text/event-stream MIME type with data: prefixed messages.
+
+### Input
+HTTP request to streaming endpoint
+
+### Output
+Received: Message 0
+Received: Message 1
+Received: Message 2
+Received: Message 3
+
+## State Management
+
+### What
+Pattern for managing application state centrally.
+
+### Example
+```js
+class StateManager {
+  constructor(initialState = {}) {
+    this.state = initialState;
+    this.listeners = [];
+  }
+  
+  setState(updates) {
+    this.state = { ...this.state, ...updates };
+    this.notify();
+  }
+  
+  getState() {
+    return this.state;
+  }
+  
+  subscribe(listener) {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== listener);
+    };
+  }
+  
+  notify() {
+    this.listeners.forEach(listener => listener(this.state));
+  }
+}
+
+const store = new StateManager({ count: 0 });
+store.subscribe((state) => console.log('State changed:', state));
+store.setState({ count: 1 });
+store.setState({ count: 2 });
+```
+
+### Logic
+Central state with subscription pattern for reactive updates.
+
+### Input
+State updates via setState
+
+### Output
+State changed: {count: 1}
+State changed: {count: 2}
+
+## Control Flow
+
+### What
+Patterns for managing execution flow in complex systems.
+
+### Example
+```js
+// Sequential execution with error handling
+async function executeSteps(steps) {
+  const results = [];
+  
+  for (const step of steps) {
+    try {
+      const result = await step();
+      results.push({ success: true, result });
+    } catch (error) {
+      results.push({ success: false, error: error.message });
+      break; // Stop on first error
+    }
+  }
+  
+  return results;
+}
+
+// Usage
+const steps = [
+  () => Promise.resolve('Step 1 complete'),
+  () => Promise.reject(new Error('Step 2 failed')),
+  () => Promise.resolve('Step 3 complete') // Won't execute
+];
+
+executeSteps(steps).then(console.log);
+```
+
+### Logic
+Control flow patterns handle sequencing, branching, and error recovery.
+
+### Input
+Array of async steps with one failure
+
+### Output
+[
+  {success: true, result: 'Step 1 complete'},
+  {success: false, error: 'Step 2 failed'}
+]
+
+## Separation of Concerns
+
+### What
+Architectural pattern separating different responsibilities.
+
+### Example
+```js
+// Planner - decides what to do
+class Planner {
+  plan(goal) {
+    return [
+      { type: 'fetch', url: '/api/data' },
+      { type: 'process', data: null },
+      { type: 'save', result: null }
+    ];
+  }
+}
+
+// Executor - executes plans
+class Executor {
+  async execute(plan) {
+    const results = [];
+    
+    for (const step of plan) {
+      switch (step.type) {
+        case 'fetch':
+          step.data = await this.fetch(step.url);
+          break;
+        case 'process':
+          step.result = this.process(step.data);
+          break;
+        case 'save':
+          await this.save(step.result);
+          break;
+      }
+      results.push(step);
+    }
+    
+    return results;
+  }
+  
+  async fetch(url) {
+    return { data: 'fetched data' };
+  }
+  
+  process(data) {
+    return data.data.toUpperCase();
+  }
+  
+  async save(result) {
+    console.log('Saved:', result);
+  }
+}
+
+// Tool - provides capabilities
+class Tool {
+  getCapabilities() {
+    return ['fetch', 'process', 'save'];
+  }
+}
+
+// Usage
+const planner = new Planner();
+const executor = new Executor();
+const tool = new Tool();
+
+const plan = planner.plan('Get and process data');
+executor.execute(plan);
+```
+
+### Logic
+Separate planning, execution, and tool capabilities into distinct components.
+
+### Input
+Goal to achieve
+
+### Output
+Saved: FETCHED DATA
+[execution results]
 
 ## Stack vs Heap
 
