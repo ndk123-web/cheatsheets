@@ -8,6 +8,7 @@ Comprehensive end-to-end reference for Python from CPython runtime internals, me
 - [High Priority Topics](#high-priority-topics)
 - [1 Python Architecture, CPython Internals, and Memory Model](#1-python-architecture-cpython-internals-and-memory-model)
 - [2 Environment, Tooling, and Package Management](#2-environment-tooling-and-package-management)
+  - [Import debugging: local modules can shadow packages](#practical-import-debugging-local-modules-can-shadow-packages)
 - [3 Variables, Scopes, and LEGB Rule](#3-variables-scopes-and-legb-rule)
 - [4 Data Types, Mutability, and Memory Representation](#4-data-types-mutability-and-memory-representation)
 - [5 Strings, Slicing, and Formatting](#5-strings-slicing-and-formatting)
@@ -23,6 +24,7 @@ Comprehensive end-to-end reference for Python from CPython runtime internals, me
 - [15 Context Managers and the with Statement](#15-context-managers-and-the-with-statement)
 - [16 Static Typing and Type Hints (PEP 484 - PEP 695)](#16-static-typing-and-type-hints-pep-484---pep-695)
 - [17 Concurrency: Multi-Threading, Multi-Processing, and Asyncio](#17-concurrency-multi-threading-multi-processing-and-asyncio)
+  - [Practical async/await execution](#practical-asyncawait-execution-coroutines-event-loops-and-concurrency)
 - [18 Modern Web Backends (FastAPI & Async Architecture)](#18-modern-web-backends-fastapi--async-architecture)
 - [19 File I/O, Serialization, and Network Requests](#19-file-io-serialization-and-network-requests)
 - [20 Testing, Benchmarking, and Profiling](#20-testing-benchmarking-and-profiling)
@@ -128,6 +130,10 @@ print(mcp.__file__)  # Shows the module path Python actually imported.
 ```
 
 This general rule applies to names such as `json.py`, `typing.py`, `asyncio.py`, or `requests.py` too. Avoid naming application files after standard-library or third-party packages.
+
+**References**
+- [Python documentation: The import system](https://docs.python.org/3/reference/import.html)
+- [AI / LLM Engineering Cheatsheet: MCP and SDK import troubleshooting](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#157-common-mcp-debugging-issue-a-local-file-shadows-the-package)
 
 ---
 
@@ -887,6 +893,13 @@ asyncio.run(main())
 If the client receives a `StdioServerParameters` configuration rather than a URL, the SDK can launch the MCP server as a subprocess and communicate via its standard input/output pipes. This process relationship is separate from Python's event-loop mechanism.
 
 **Mental model:** `async/await` is the language syntax; an event loop/async runtime executes and coordinates coroutines; task-scheduling calls create concurrency; async-compatible I/O lets tasks yield while waiting.
+
+**References**
+- [Python documentation: asyncio — Asynchronous I/O](https://docs.python.org/3/library/asyncio.html)
+- [Python documentation: Coroutines and Tasks](https://docs.python.org/3/library/asyncio-task.html)
+- [Python documentation: Asyncio development notes](https://docs.python.org/3/library/asyncio-dev.html)
+- [AI / LLM Engineering Cheatsheet: Tool calling and MCP](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#13-tool--function-calling)
+- [MCP Python SDK v2 documentation](https://py.sdk.modelcontextprotocol.io/)
 
 ---
 
