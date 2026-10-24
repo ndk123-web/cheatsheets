@@ -19,8 +19,15 @@
 11. [Useful Python standard-library modules](#11-useful-python-standard-library-modules)
 12. [Key distinctions and interview recap](#12-key-distinctions-and-interview-recap)
 13. [Tool / function calling](#13-tool--function-calling)
+    - [Tool schemas](#131-tool-schema)
+    - [Model-selected tool calls](#132-model-selected-tool-calls)
+    - [Tool execution loop](#133-tool-execution-loop)
+    - [Gemini SDK function calling example](#134-gemini-function-calling-with-the-google-gen-ai-python-sdk)
+    - [Function calling vs. structured output](#135-function-calling-is-not-the-same-as-structured-output)
 14. [Python async/await and the event loop](#14-python-asyncawait-coroutines-and-the-event-loop)
+    - [Detailed Python async/await guide](https://github.com/ndk123-web/cheatsheets/blob/main/Languages/python.md#practical-asyncawait-execution-coroutines-event-loops-and-concurrency)
 15. [Model Context Protocol (MCP)](#15-model-context-protocol-mcp)
+    - [Python import-shadowing debugging note](https://github.com/ndk123-web/cheatsheets/blob/main/Languages/python.md#practical-import-debugging-local-modules-can-shadow-packages)
 
 ---
 
@@ -1026,6 +1033,9 @@ Model generates a user-facing response (or requests another tool)
 This diagram is conceptual. Not every SDK directly converts a model tool call into an MCP call automatically; your application may need an adapter that maps model tool names and arguments to MCP tools, handles results/errors, and sends the result back to the model.
 
 ### 15.9 Interview recap: tools, resources, and transports
+
+**Related Python reference:** for deeper explanations of coroutine objects, `await`, event loops, sequential versus concurrent tasks, and `async with`, see the [Python Cheatsheet: Practical Async/Await Execution](https://github.com/ndk123-web/cheatsheets/blob/main/Languages/python.md#practical-asyncawait-execution-coroutines-event-loops-and-concurrency). For package import shadowing, see [Practical Import Debugging](https://github.com/ndk123-web/cheatsheets/blob/main/Languages/python.md#practical-import-debugging-local-modules-can-shadow-packages).
+
 
 | Concept | Remember |
 | --- | --- |
