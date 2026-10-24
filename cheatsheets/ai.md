@@ -483,3 +483,443 @@ Prompt -> Tokenization -> Context processing -> Inference -> Output
 - Semantic validation and safe handling of refusals/incomplete output.
 - Tool/function calling and retrieval-augmented generation (RAG).
 - Logging, timeouts, usage tracking, and production configuration.
+
+---
+
+## 13. Tool / Function Calling
+
+**Tool calling** lets a model request that the application execute a function. The model does not ordinarily execute the application's Python code itself. The application or provider SDK executes the selected function and returns its result to the model when another model turn is needed.
+
+### 13.1 Tool schema
+
+A **tool schema** describes the function to the model: its name, purpose, input fields, types, and sometimes required fields and constraints. Schemas help the model form a well-shaped call; application-side validation and authorization are still necessary.
+
+Example Python functions:
+
+```python
+def add(a: int, b: int) -> int:
+    """Add two integers."""
+    return a + b
+
+
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers."""
+    return a * b
+```
+
+Conceptual schema for `add` (the exact schema format depends on the provider):
+
+```json
+{
+  "name": "add",
+  "description": "Add two integers.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "a": {"type": "integer"},
+      "b": {"type": "integer"}
+    },
+    "required": ["a", "b"],
+    "additionalProperties": false
+  }
+}
+```
+
+A schema is a description/contract. Registering a Python function and supplying its schema are separate implementation details unless an SDK combines them for you.
+
+### 13.2 Model-selected tool calls
+
+The typical lifecycle is:
+
+1. The application sends the user request and available tool definitions to the model.
+2. The model returns either a normal answer or a tool-call request containing a tool name and arguments.
+3. The application validates the tool name and arguments, then invokes the corresponding function.
+4. The application sends the tool result back to the model in the provider's expected message format.
+5. The model can use the result to answer the user or request another tool.
+
+The model **requests** a tool call; the application decides whether it is allowed and actually runs it. Never treat model-generated arguments as trusted authorization.
+
+Example of a manual function registry:
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+def multiply(a: int, b: int) -> int:
+    return a * b
+
+
+TOOLS = {
+    "add": add,
+    "multiply": multiply,
+}
+
+
+def execute_tool(name: str, arguments: dict) -> int:
+    function = TOOLS.get(name)
+    if function is None:
+        raise ValueError(f"Unknown tool: {name}")
+
+    # Production code should validate argument keys, types, bounds,
+    # permissions, and side effects before invoking the function.
+    return function(**arguments)
+
+
+print(execute_tool("add", {"a": 1, "b": 2}))  # 3
+```
+
+This registry demonstrates dispatching by name. It is not a complete security validator, and a real provider integration must also handle tool-call IDs, response message formats, errors, and multiple calls.
+
+### 13.3 Tool execution loop
+
+A tool-enabled application often runs a loop until the model returns a final answer or a limit is reached:
+
+```text
+Send messages + tool definitions to model
+                 |
+                 v
+       Did model request a tool?
+          /              \
+        No                Yes
+        |                  |
+ Return final answer   Validate call
+                           |
+                      Execute function
+                           |
+                   Append tool result
+                           |
+                   Call model again
+```
+
+A single tool call does not necessarily finish the conversation. The model may ask for another call after seeing the first result. Apply a maximum number of rounds, timeouts, and error handling to avoid runaway loops.
+
+**Parallelism and dependencies:** calls that are independent may be executed concurrently if the provider/application supports it and side effects are safe. Calls with dependencies must be ordered—for example, search for an order ID before retrieving the order details. Do not assume the model has correctly coordinated dependencies just because it returned several calls.
+
+### 13.4 Function calling is not the same as structured output
+
+| Structured output | Tool/function calling |
+| --- | --- |
+| Requests data in a known output format | Requests that an application execute a named operation |
+| Result might be a JSON object | Result might be a function name plus arguments |
+| Used for predictable data extraction/generation | Used to connect model reasoning to application capabilities |
+| Does not inherently execute a function | Requires application/SDK execution and result handling |
+
+A tool call's arguments can themselves use a schema. That does not make the tool call and the function execution the same operation.
+
+---
+
+## 14. Python `async` / `await`, coroutines, and the event loop
+
+These are Python language/runtime concepts frequently seen in asynchronous SDKs, network clients, and MCP applications.
+
+### 14.1 What does `async def` mean?
+
+Calling an `async def` function creates a **coroutine object**. It does not run the function to completion like a normal function call.
+
+```python
+async def say_hello():
+    return "Hello"
+
+
+coroutine = say_hello()
+# The coroutine has been created, but has not been awaited/run.
+```
+
+If a coroutine is never awaited or scheduled, Python may emit a "coroutine was never awaited" warning.
+
+### 14.2 What does `await` mean?
+
+Inside an asynchronous function, `await` waits for an awaitable operation. While the operation is waiting, it can suspend the current coroutine and give the event loop an opportunity to run other ready tasks.
+
+```python
+import asyncio
+
+
+async def fetch_example():
+    await asyncio.sleep(1)  # Simulate an asynchronous wait.
+    return "Done"
+
+
+async def main():
+    result = await fetch_example()
+    print(result)
+
+
+asyncio.run(main())
+```
+
+### 14.3 What is the event loop?
+
+The **event loop** schedules and resumes asynchronous tasks/coroutines. In a common single-threaded asyncio program, when one task awaits asynchronous I/O, the event loop can let another ready task make progress.
+
+- `async def`: defines a coroutine function.
+- `await`: suspends the current coroutine while an awaitable progresses.
+- `asyncio.run(main())`: creates/manages an event loop to run the top-level coroutine, then cleans it up.
+- `asyncio.gather(a(), b())`: schedules/awaits multiple awaitables so they can make progress concurrently.
+- `async with`: uses an asynchronous context manager for lifecycle operations that may require awaiting setup/cleanup.
+
+`async` and `await` are syntax, not a standalone scheduler. A coroutine must be awaited or scheduled by a running asynchronous runtime. In frameworks such as an ASGI web server, the server commonly manages the event loop; application code normally should not call `asyncio.run()` inside an already running event loop.
+
+### 14.4 Sequential waiting versus concurrency
+
+Sequential example:
+
+```python
+import asyncio
+import time
+
+
+async def task(name: str) -> None:
+    print(name, "started")
+    await asyncio.sleep(2)
+    print(name, "finished")
+
+
+async def sequential():
+    await task("A")
+    await task("B")
+
+
+start = time.perf_counter()
+asyncio.run(sequential())
+print(f"Elapsed: {time.perf_counter() - start:.1f}s")  # About 4 seconds
+```
+
+Concurrent example:
+
+```python
+import asyncio
+import time
+
+
+async def task(name: str) -> None:
+    print(name, "started")
+    await asyncio.sleep(2)
+    print(name, "finished")
+
+
+async def concurrent():
+    await asyncio.gather(task("A"), task("B"))
+
+
+start = time.perf_counter()
+asyncio.run(concurrent())
+print(f"Elapsed: {time.perf_counter() - start:.1f}s")  # About 2 seconds
+```
+
+The sleep intervals overlap in the second example. This is **concurrency**, not CPU parallelism. Single-threaded asyncio does not execute two Python instructions at precisely the same instant. It switches between tasks when they suspend/yield. A blocking call such as `time.sleep(2)` inside an async task blocks the event-loop thread and prevents other tasks on that loop from progressing during the block.
+
+**Important distinction:** `asyncio` does not automatically make multiple tasks concurrent. The program must schedule multiple tasks (for example, using `asyncio.gather` or `asyncio.create_task`), and the operations must yield control for other tasks to progress.
+
+### 14.5 Why asynchronous I/O helps servers
+
+Suppose several requests are waiting for network or database responses. An asynchronous server can suspend one request while its I/O is pending and use the event loop to progress other ready requests. This can improve concurrency and resource efficiency for I/O-bound workloads.
+
+It does not mean every operation becomes faster. CPU-heavy work or blocking synchronous libraries can still stall a single event loop. Servers and client libraries must support asynchronous I/O for this model to work effectively.
+
+---
+
+## 15. Model Context Protocol (MCP)
+
+**Model Context Protocol (MCP)** is a protocol for connecting AI applications to external capabilities and context through a standardized client/server interface. The model provider and MCP are different layers: a model may request a tool, while the application uses an MCP client to discover/call tools on an MCP server.
+
+### 15.1 Main participants
+
+- **MCP host:** the AI application that manages the overall experience and connections.
+- **MCP client:** the component that communicates with a particular MCP server.
+- **MCP server:** exposes capabilities such as tools, resources, and prompts.
+- **Tool:** an operation that can be called, such as adding two numbers or searching records.
+- **Resource:** data or context that a client can read using a URI.
+- **Resource template:** a URI pattern for parameterized resources, such as `greeting://{name}`.
+
+A resource is not the same as a tool: a tool performs an operation; a resource provides content. Actual client behavior and methods depend on the SDK version.
+
+### 15.2 Create an MCP server using the Python SDK
+
+The examples below use the newer Python SDK API with `MCPServer` and `Client`. Install the SDK in your project environment, for example:
+
+```bash
+uv add "mcp[cli]"
+```
+
+Example server file, `server.py`:
+
+```python
+from mcp.server import MCPServer
+
+mcp = MCPServer("Demo MCP")
+
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two integers."""
+    return a + b
+
+
+@mcp.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers."""
+    return a * b
+
+
+@mcp.resource("greeting://{name}")
+def greeting(name: str) -> str:
+    """Return a greeting for a name."""
+    return f"Hello, {name}!"
+```
+
+The decorators register the Python functions as MCP capabilities. The SDK uses function metadata/type annotations to describe tool inputs, according to its supported behavior.
+
+The URI delimiter matters: use `greeting://{name}`, not `greeting//{name}`.
+
+### 15.3 MCP transports: Streamable HTTP versus STDIO
+
+**Streamable HTTP:** the server runs as a separately started service and the client connects to its HTTP endpoint. A typical SDK CLI command is:
+
+```powershell
+uv run mcp run server.py --transport streamable-http
+```
+
+The client connects to the configured endpoint, commonly something like `http://localhost:8000/mcp` for a local setup.
+
+**STDIO:** the client can start the server as a subprocess and exchange protocol messages over the process's standard input/output pipes. This usually avoids exposing an HTTP port for the local connection.
+
+- `stdin` pipe: client sends protocol input to the child server.
+- `stdout` pipe: server sends protocol output to the client.
+- `stderr`: appropriate place for diagnostic output; arbitrary prints to `stdout` can corrupt the protocol stream.
+
+The parent/child relationship is an operating-system process-management detail; MCP defines the messages exchanged over the transport.
+
+### 15.4 MCP client with Streamable HTTP
+
+For a server already running over HTTP, the SDK client can connect to its endpoint. Example shape:
+
+```python
+import asyncio
+from mcp import Client
+
+
+async def main() -> None:
+    async with Client("http://localhost:8000/mcp") as client:
+        result = await client.call_tool("add", {"a": 1, "b": 2})
+        print(result.structured_content)
+
+
+asyncio.run(main())
+```
+
+What the syntax means:
+
+1. `async def main()` defines a coroutine.
+2. `asyncio.run(main())` runs the top-level coroutine using an event loop.
+3. `async with Client(...)` manages the client's asynchronous lifecycle and cleanup.
+4. `await client.call_tool(...)` sends the tool request and waits for its asynchronous response.
+5. `result.structured_content` accesses the structured result when the server/SDK provides it; the example `add` call returns a result equivalent to `{"result": 3}`.
+
+### 15.5 MCP client with STDIO
+
+In this transport, the client configuration describes the command to start rather than an HTTP URL. The client SDK launches/communicates with that server process, subject to the exact API of the installed SDK version.
+
+Example configuration concept:
+
+```python
+server = StdioServerParameters(
+    command="uv",
+    args=["run", "server.py"],
+)
+```
+
+The server process must start the MCP protocol on STDIO. Use the current SDK documentation for the exact import and client constructor supported by your installed version; avoid mixing examples from older SDK APIs such as `FastMCP`/`ClientSession` with the newer `MCPServer`/`Client` API.
+
+### 15.6 Why might `list_resources()` return `resources=[]`?
+
+A fixed resource and a resource template are different:
+
+```python
+@mcp.resource("docs://getting-started")
+def get_docs() -> str:
+    return "Welcome to the documentation."
+```
+
+This is a fixed URI resource, which should appear in the ordinary resource listing if registered and exposed correctly.
+
+```python
+@mcp.resource("greeting://{name}")
+def greeting(name: str) -> str:
+    return f"Hello, {name}!"
+```
+
+This is a **resource template**. A client should inspect resource templates using the matching method (often named `list_resource_templates()`) rather than expecting it to appear as a fixed item from `list_resources()`. To read a specific instance, use a URI such as `greeting://World` with the SDK's resource-reading method.
+
+For example, in SDK versions whose API matches this shape:
+
+```python
+templates = await client.list_resource_templates()
+print([item.uri_template for item in templates.resource_templates])
+
+result = await client.read_resource("greeting://World")
+```
+
+Always check the installed SDK version's documentation for exact result fields and method signatures. If no fixed resources are registered, `resources=[]` can be expected even though one or more resource templates exist.
+
+### 15.7 Common MCP debugging issue: a local file shadows the package
+
+Avoid naming your own script `mcp.py` if you need to import the installed `mcp` package. Python may import your local file instead of the installed package, causing errors such as:
+
+```text
+ModuleNotFoundError: No module named 'mcp.server'; 'mcp' is not a package
+```
+
+Rename the local file (for example, `server.py`), remove a stale `__pycache__` entry if needed, and run from the correct project environment.
+
+### 15.8 How model tool calling and MCP work together
+
+A simplified end-to-end flow can look like this:
+
+```text
+User asks a question
+       |
+       v
+Application sends prompt + model tool definitions
+       |
+       v
+Model returns a tool-call request
+       |
+       v
+Application / SDK routes the request to an available capability
+       |
+       v
+MCP client sends the protocol request to an MCP server
+       |
+       v
+MCP server executes the tool and returns a result
+       |
+       v
+Application sends the result back to the model
+       |
+       v
+Model generates a user-facing response (or requests another tool)
+```
+
+This diagram is conceptual. Not every SDK directly converts a model tool call into an MCP call automatically; your application may need an adapter that maps model tool names and arguments to MCP tools, handles results/errors, and sends the result back to the model.
+
+### 15.9 Interview recap: tools, resources, and transports
+
+| Concept | Remember |
+| --- | --- |
+| Tool schema | Describes a callable operation and its argument shape |
+| Model tool call | A request from the model; the application still executes/authorizes it |
+| Tool execution loop | Send tool definitions, receive call, execute, return result, continue model turn |
+| MCP client | Connects to an MCP server and makes protocol requests |
+| MCP server | Exposes tools, resources, prompts, or other supported capabilities |
+| Tool | Performs an operation |
+| Resource | Provides data/context at a URI |
+| Resource template | URI pattern with parameters |
+| Streamable HTTP | Client communicates with an HTTP-based MCP endpoint |
+| STDIO | Client and server can communicate through process pipes |
+| `asyncio` event loop | Runs and coordinates Python coroutines/tasks |
+| `async with` | Manages an asynchronous context/lifecycle |
+| `await` | Suspends the current coroutine while an awaitable completes |
+
+**Security reminder:** treat tool arguments and resource contents as untrusted input. Validate arguments, authorize sensitive actions, set timeouts, constrain file/network access, and handle errors explicitly.
