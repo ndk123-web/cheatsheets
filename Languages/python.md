@@ -25,6 +25,7 @@ Comprehensive end-to-end reference for Python from CPython runtime internals, me
 - [16 Static Typing and Type Hints (PEP 484 - PEP 695)](#16-static-typing-and-type-hints-pep-484---pep-695)
 - [17 Concurrency: Multi-Threading, Multi-Processing, and Asyncio](#17-concurrency-multi-threading-multi-processing-and-asyncio)
   - [Practical async/await execution](#practical-asyncawait-execution-coroutines-event-loops-and-concurrency)
+  - [AI/LLM Cheatsheet: tool calling and MCP](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#13-tool--function-calling)
 - [18 Modern Web Backends (FastAPI & Async Architecture)](#18-modern-web-backends-fastapi--async-architecture)
 - [19 File I/O, Serialization, and Network Requests](#19-file-io-serialization-and-network-requests)
 - [20 Testing, Benchmarking, and Profiling](#20-testing-benchmarking-and-profiling)
@@ -134,6 +135,7 @@ This general rule applies to names such as `json.py`, `typing.py`, `asyncio.py`,
 **References**
 - [Python documentation: The import system](https://docs.python.org/3/reference/import.html)
 - [AI / LLM Engineering Cheatsheet: MCP and SDK import troubleshooting](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#157-common-mcp-debugging-issue-a-local-file-shadows-the-package)
+- [AI / LLM Engineering Cheatsheet: MCP client/server overview](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#15-model-context-protocol-mcp)
 
 ---
 
@@ -900,6 +902,7 @@ If the client receives a `StdioServerParameters` configuration rather than a URL
 - [Python documentation: Asyncio development notes](https://docs.python.org/3/library/asyncio-dev.html)
 - [AI / LLM Engineering Cheatsheet: Tool calling and MCP](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#13-tool--function-calling)
 - [MCP Python SDK v2 documentation](https://py.sdk.modelcontextprotocol.io/)
+- [AI / LLM Engineering Cheatsheet: Python async/await and MCP client examples](https://github.com/ndk123-web/cheatsheets/blob/main/cheatsheets/ai.md#14-python-asyncawait-coroutines-and-the-event-loop)
 
 ---
 
