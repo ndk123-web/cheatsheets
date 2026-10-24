@@ -18,6 +18,9 @@
 10. [API errors and retries](#10-api-errors-and-retries)
 11. [Useful Python standard-library modules](#11-useful-python-standard-library-modules)
 12. [Key distinctions and interview recap](#12-key-distinctions-and-interview-recap)
+13. [Tool / function calling](#13-tool--function-calling)
+14. [Python async/await and the event loop](#14-python-asyncawait-coroutines-and-the-event-loop)
+15. [Model Context Protocol (MCP)](#15-model-context-protocol-mcp)
 
 ---
 
@@ -573,6 +576,8 @@ This registry demonstrates dispatching by name. It is not a complete security va
 
 ### 13.3 Tool execution loop
 
+A reference implementation may be SDK-managed (such as the Gemini example above) or explicitly managed by your application.
+
 A tool-enabled application often runs a loop until the model returns a final answer or a limit is reached:
 
 ```text
@@ -596,7 +601,123 @@ A single tool call does not necessarily finish the conversation. The model may a
 
 **Parallelism and dependencies:** calls that are independent may be executed concurrently if the provider/application supports it and side effects are safe. Calls with dependencies must be ordered—for example, search for an order ID before retrieving the order details. Do not assume the model has correctly coordinated dependencies just because it returned several calls.
 
-### 13.4 Function calling is not the same as structured output
+### 13.4 Gemini function calling with the Google Gen AI Python SDK
+
+Official references:
+- [Google Gen AI Python SDK — Function Calling](https://googleapis.github.io/python-genai/#function-calling)
+- [Gemini API — Function Calling](https://ai.google.dev/gemini-api/docs/function-calling)
+
+Install the current SDK:
+
+```bash
+pip install google-genai
+```
+
+Configure `GEMINI_API_KEY` (or the supported `GOOGLE_API_KEY`) in the environment. Do not hardcode API keys.
+
+#### SDK-managed automatic function calling
+
+The Google Gen AI Python SDK can accept Python functions directly. It derives function declarations from the function signature and docstring, detects model function calls, executes the registered Python function, sends its result to Gemini, and returns the final response by default.
+
+```python
+import os
+from google import genai
+from google.genai import types
+
+
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers.
+
+    Args:
+        a: The first integer.
+        b: The second integer.
+    """
+    return a * b
+
+
+def main() -> None:
+    if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        raise RuntimeError("Set GEMINI_API_KEY or GOOGLE_API_KEY first.")
+
+    client = genai.Client()
+    try:
+        response = client.models.generate_content(
+            model="gemini-flash-latest",  # Choose a supported model for your account.
+            contents="What is 7 multiplied by 8?",
+            config=types.GenerateContentConfig(tools=[multiply]),
+        )
+        print(response.text)
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This illustrates the SDK-managed flow. The model selects whether to request `multiply`, and the SDK runs the function and feeds its return value back to the model. The model does not itself execute Python code. For production use, validate inputs and authorize sensitive operations even when the SDK manages the call cycle.
+
+#### Manual function calling (application controls execution)
+
+Disable automatic calling when you want to inspect the function-call request and decide when/how to run the function yourself:
+
+```python
+from google import genai
+from google.genai import types
+
+client = genai.Client()
+
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers."""
+    return a * b
+
+
+question = "What is 7 multiplied by 8?"
+response = client.models.generate_content(
+    model="gemini-flash-latest",
+    contents=question,
+    config=types.GenerateContentConfig(
+        tools=[multiply],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
+    ),
+)
+
+function_calls = response.function_calls or []
+if not function_calls:
+    print(response.text)  # Gemini answered without asking for a tool.
+else:
+    call = function_calls[0]
+    if call.name != "multiply":
+        raise ValueError(f"Unexpected tool request: {call.name}")
+
+    args = dict(call.args)
+    # Validate argument keys, types, ranges, and permissions before invoking.
+    result = multiply(**args)
+
+    function_response = types.Part.from_function_response(
+        name=call.name,
+        response={"result": result},
+    )
+    response = client.models.generate_content(
+        model="gemini-flash-latest",
+        contents=[
+            types.Content(role="user", parts=[types.Part.from_text(text=question)]),
+            # The model's original function-call turn must also be preserved.
+            response.candidates[0].content,
+            types.Content(role="tool", parts=[function_response]),
+        ],
+        config=types.GenerateContentConfig(tools=[multiply]),
+    )
+    print(response.text)
+
+client.close()
+```
+
+This is a compact one-call demonstration. A production implementation should preserve the complete conversation history, process every requested call appropriately, handle function errors, and loop until the model returns a final answer. Do not execute unknown tool names or blindly trust model-supplied arguments.
+
+### 13.5 Function calling is not the same as structured output
 
 | Structured output | Tool/function calling |
 | --- | --- |
@@ -923,3 +1044,12 @@ This diagram is conceptual. Not every SDK directly converts a model tool call in
 | `await` | Suspends the current coroutine while an awaitable completes |
 
 **Security reminder:** treat tool arguments and resource contents as untrusted input. Validate arguments, authorize sensitive actions, set timeouts, constrain file/network access, and handle errors explicitly.
+
+### Official references
+
+- [Google Gen AI Python SDK — Function Calling](https://googleapis.github.io/python-genai/#function-calling)
+- [Gemini API — Function Calling](https://ai.google.dev/gemini-api/docs/function-calling)
+- [MCP Python SDK v2 — Getting Started](https://py.sdk.modelcontextprotocol.io/)
+- [MCP Python SDK v2 — Client](https://py.sdk.modelcontextprotocol.io/client/)
+- [MCP Python SDK v2 — Client Transports](https://py.sdk.modelcontextprotocol.io/client/transports/)
+
