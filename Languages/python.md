@@ -103,6 +103,34 @@ gc.collect()
 | **poetry** | Fast | Dependency resolver, virtualenv, and build tool | `poetry add fastapi`, `poetry run` |
 | **pip + venv** | Standard | Default built-in toolchain | `python -m venv .venv`, `pip install -r requirements.txt` |
 
+### Practical Import Debugging: Local Modules Can Shadow Packages
+
+Python searches import locations in order. A file in your project can accidentally shadow an installed package if it has the same name.
+
+For example, naming your own file `mcp.py` can cause this error when you try to import the installed MCP SDK:
+
+```text
+ModuleNotFoundError: No module named 'mcp.server'; 'mcp' is not a package
+```
+
+Python may be importing your local `mcp.py` instead of the installed `mcp` package.
+
+**Fix:**
+1. Rename the local file to something else, such as `server.py`.
+2. Remove the stale `__pycache__` entry for the old filename if one exists.
+3. Run Python from the intended project directory and virtual environment.
+4. If the import still fails, check which module Python is importing:
+
+```python
+import mcp
+
+print(mcp.__file__)  # Shows the module path Python actually imported.
+```
+
+This general rule applies to names such as `json.py`, `typing.py`, `asyncio.py`, or `requests.py` too. Avoid naming application files after standard-library or third-party packages.
+
+---
+
 ### Modern `pyproject.toml` Standard (PEP 621)
 ```toml
 [project]
@@ -719,6 +747,146 @@ async def main():
 
 asyncio.run(main())
 ```
+
+### Practical Async/Await Execution: Coroutines, Event Loops, and Concurrency
+
+#### 1. An `async def` call does not run like a normal function call
+
+Calling an asynchronous function creates a **coroutine object**. The coroutine must be awaited or scheduled by a running async runtime.
+
+```python
+async def get_message():
+    return "Hello"
+
+
+coroutine = get_message()
+# This creates a coroutine object; it does not print "Hello" or finish the work.
+# If it is never awaited or scheduled, Python may warn that it was never awaited.
+```
+
+#### 2. What does `await` do?
+
+`await` waits for an awaitable operation inside an async function. When that operation is waiting, the current coroutine can suspend and let the event loop run another ready task.
+
+```python
+import asyncio
+
+
+async def get_message() -> str:
+    await asyncio.sleep(1)  # Simulates non-blocking I/O wait.
+    return "Hello"
+
+
+async def main() -> None:
+    message = await get_message()
+    print(message)
+
+
+asyncio.run(main())
+```
+
+- `async def`: defines a coroutine function.
+- `await`: waits for an awaitable and allows the current coroutine to suspend.
+- `asyncio.run(main())`: runs the top-level coroutine using an event loop, then closes that loop.
+- In an async framework such as an ASGI server, the framework already manages the event loop. Do not normally call `asyncio.run()` from inside an already running event loop.
+
+#### 3. The event loop does not create tasks automatically
+
+The event loop coordinates scheduled tasks. Multiple tasks can make progress concurrently when one yields during asynchronous I/O. You must still schedule the tasks; `asyncio` does not automatically run every coroutine concurrently.
+
+Sequential execution:
+
+```python
+import asyncio
+import time
+
+
+async def task(name: str) -> None:
+    print(name, "started")
+    await asyncio.sleep(2)
+    print(name, "finished")
+
+
+async def main() -> None:
+    await task("A")
+    await task("B")
+
+
+start = time.perf_counter()
+asyncio.run(main())
+print(f"Elapsed: {time.perf_counter() - start:.1f}s")  # About 4 seconds
+```
+
+Concurrent execution with `asyncio.gather()`:
+
+```python
+import asyncio
+import time
+
+
+async def task(name: str) -> None:
+    print(name, "started")
+    await asyncio.sleep(2)
+    print(name, "finished")
+
+
+async def main() -> None:
+    await asyncio.gather(task("A"), task("B"))
+
+
+start = time.perf_counter()
+asyncio.run(main())
+print(f"Elapsed: {time.perf_counter() - start:.1f}s")  # About 2 seconds
+```
+
+In the second example, both two-second waits overlap. This is **concurrency**, not necessarily CPU parallelism. In single-threaded asyncio, tasks execute one at a time and switch when they suspend/yield. If task A awaits I/O, task B can run; if task B awaits I/O, task A can resume when ready.
+
+#### 4. Do not block the event-loop thread
+
+`time.sleep(2)` blocks the thread. `await asyncio.sleep(2)` suspends the current coroutine without blocking the event loop.
+
+```python
+import asyncio
+import time
+
+
+async def bad_task() -> None:
+    time.sleep(2)  # Blocking: other tasks on this loop cannot progress.
+    print("Finished blocking wait")
+
+
+async def good_task() -> None:
+    await asyncio.sleep(2)  # Non-blocking async wait.
+    print("Finished async wait")
+```
+
+Use asynchronous-compatible network/database libraries inside async code. A synchronous, blocking call can still stall the loop even when placed inside `async def`.
+
+#### 5. Why does an MCP client use `async with` and `await`?
+
+The MCP Python SDK v2 client has an asynchronous lifecycle and its protocol methods are async. An example:
+
+```python
+import asyncio
+from mcp import Client
+
+
+async def main() -> None:
+    async with Client("http://localhost:8000/mcp") as client:
+        result = await client.call_tool("add", {"a": 1, "b": 2})
+        print(result.structured_content)
+
+
+asyncio.run(main())
+```
+
+- `async with Client(...)`: enters the async context manager, establishes/negotiates the connection, and closes it when the block exits.
+- `await client.call_tool(...)`: waits for the asynchronous tool request/response.
+- `asyncio.run(main())`: starts the event loop for this standalone script.
+
+If the client receives a `StdioServerParameters` configuration rather than a URL, the SDK can launch the MCP server as a subprocess and communicate via its standard input/output pipes. This process relationship is separate from Python's event-loop mechanism.
+
+**Mental model:** `async/await` is the language syntax; an event loop/async runtime executes and coordinates coroutines; task-scheduling calls create concurrency; async-compatible I/O lets tasks yield while waiting.
 
 ---
 
