@@ -18,7 +18,16 @@
 10. [Performance Trade-Offs](#10-performance-trade-offs)
 11. [Latency Percentiles: p95 and p99](#11-latency-percentiles-p95-and-p99)
 12. [Quick Revision](#12-quick-revision)
-13. [References](#13-references)
+13. [Networking & Web Communication](#13-networking--web-communication)
+    - [HTTP Deep Dive](#131-http-deep-dive)
+    - [TCP vs. UDP](#132-tcp-vs-udp)
+    - [DNS](#133-dns-domain-name-system)
+    - [TLS and HTTPS](#134-tls-and-https)
+    - [Sockets and Keep-Alive](#135-sockets-and-keep-alive)
+    - [Reverse Proxies](#136-reverse-proxies)
+    - [Load Balancers](#137-load-balancers)
+    - [Complete Request–Response Lifecycle](#138-complete-requestresponse-lifecycle)
+14. [References](#14-references)
 
 ---
 
@@ -572,9 +581,333 @@ For a task-list API:
 - **Throughput:** How many requests can complete per second?
 - **Trade-offs:** Can response time improve without unacceptable cost, staleness, or complexity?
 
+
 ---
 
-## 13. References
+## 13. Networking & Web Communication
+
+This section connects the protocols and infrastructure components involved when a browser communicates with a backend. The running example is a client requesting `GET /posts` from a Node.js API.
+
+### 13.1 HTTP Deep Dive
+
+**What:** HTTP (Hypertext Transfer Protocol) is an application-layer protocol that defines request and response semantics, including methods, headers, status codes, and message framing.
+
+**Why it matters:** TCP transports bytes but does not understand application concepts such as `GET`, `POST`, `404 Not Found`, or JSON. HTTP supplies those semantics.
+
+**Typical HTTP request:**
+
+```http
+POST /posts HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+Accept: application/json
+
+{"title":"Learning System Design"}
+```
+
+A request has a start line, headers, a blank line, and an optional body. `Content-Type` describes the media type of the body being sent; `Accept` describes response media types the client can accept.
+
+HTTP message framing depends on the HTTP version. In HTTP/1.1, body length can be signaled by `Content-Length` or transfer coding such as chunked encoding. TCP is a byte stream: one read does not necessarily equal one HTTP message, and headers/body need not map to separate TCP packets.
+
+**Common methods:**
+
+| Method | Typical use | Idempotent by HTTP semantics? |
+|---|---|---|
+| `GET` | Retrieve a resource | Yes |
+| `HEAD` | Retrieve headers without response content | Yes |
+| `POST` | Submit data or create/process a resource | Not generally |
+| `PUT` | Replace a resource representation | Yes |
+| `PATCH` | Partially modify a resource | Depends on the operation |
+| `DELETE` | Remove a resource | Yes |
+
+Idempotency means repeating an operation has the same intended effect as performing it once. A repeated `DELETE` may return a different status code while the final resource state remains unchanged. For operations such as payments or order creation, idempotency keys can help clients safely retry after uncertain outcomes.
+
+**Common status codes:**
+
+- `200 OK`: request succeeded.
+- `201 Created`: a resource was created.
+- `204 No Content`: request succeeded without response content.
+- `400 Bad Request`: request is invalid.
+- `401 Unauthorized`: valid authentication is missing or was not accepted.
+- `403 Forbidden`: the server refuses the operation.
+- `404 Not Found`: the resource or route was not found.
+- `500 Internal Server Error`: unexpected server failure.
+
+**HTTP versions:**
+
+| Version | Transport | Key behavior |
+|---|---|---|
+| HTTP/1.1 | TCP | Persistent connections; request/response exchange rules |
+| HTTP/2 | TCP | Multiplexes multiple streams on one connection; uses HPACK header compression |
+| HTTP/3 | QUIC over UDP | Multiplexed streams; avoids TCP-level cross-stream head-of-line blocking; uses QPACK |
+
+HTTP/2 still runs over TCP, so loss of a TCP segment can temporarily block delivery of later bytes on that connection. QUIC's separate streams avoid that specific cross-stream blocking behavior, though network loss can still add latency.
+
+**Node.js example:**
+
+```javascript
+const http = require("node:http");
+
+const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/posts") {
+        res.writeHead(200, {
+            "Content-Type": "application/json"
+        });
+        res.end(JSON.stringify({ posts: [] }));
+        return;
+    }
+
+    res.writeHead(404, {
+        "Content-Type": "application/json"
+    });
+    res.end(JSON.stringify({ error: "Route not found" }));
+});
+
+server.listen(3000);
+```
+
+The `node:http` module manages HTTP parsing and its underlying transport sockets. It is not the same as creating a raw TCP server with `node:net`.
+
+**References:** [MDN: HTTP overview](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview), [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110), [RFC 9112: HTTP/1.1](https://www.rfc-editor.org/rfc/rfc9112), [RFC 9113: HTTP/2](https://www.rfc-editor.org/rfc/rfc9113), [RFC 9114: HTTP/3](https://www.rfc-editor.org/rfc/rfc9114), [Node.js HTTP documentation](https://nodejs.org/api/http.html).
+
+### 13.2 TCP vs. UDP
+
+**TCP (Transmission Control Protocol)** provides a reliable, ordered, full-duplex byte stream between endpoints. It uses connection state, acknowledgements, retransmissions, flow control, and congestion control.
+
+**UDP (User Datagram Protocol)** sends datagrams without a TCP-style connection handshake. UDP does not guarantee delivery, ordering, or duplicate suppression. Applications can add their own reliability if required.
+
+| Property | TCP | UDP |
+|---|---|---|
+| Connection setup | TCP handshake | No TCP-style handshake |
+| Delivery | Reliable stream while the connection remains viable | Not guaranteed |
+| Ordering | Preserved for bytes delivered to the application | Not guaranteed |
+| Message boundaries | Not preserved | Datagram boundaries preserved |
+| Common uses | HTTP/1.1, HTTP/2, database connections | DNS, real-time media, QUIC transport |
+
+**TCP three-way handshake:** client sends SYN, server replies SYN-ACK, and client sends ACK. This synchronizes sequence numbers and establishes transport connection state.
+
+**Closing and failures:** A graceful TCP close normally uses FIN/ACK exchanges. FIN closes one direction; the other direction may remain usable until it is closed. If the network disappears unexpectedly, a peer may not receive FIN and can temporarily retain half-open connection state. Retransmission timeouts, TCP keepalive probes, and application deadlines/heartbeats can help detect failures. An application timeout must be handled by the application; it does not automatically guarantee that every resource is released.
+
+**Node.js raw TCP server:**
+
+```javascript
+const net = require("node:net");
+
+const server = net.createServer((socket) => {
+    socket.on("data", (buffer) => {
+        console.log(buffer.toString());
+        socket.write("Reply from server");
+    });
+
+    socket.on("end", () => console.log("Peer ended its sending direction"));
+    socket.on("error", console.error);
+});
+
+server.listen(4000);
+```
+
+TCP is a byte stream, so a `data` event is not guaranteed to correspond to one application message. Custom protocols need framing, such as a length prefix or a well-defined delimiter.
+
+**Node.js UDP uses `node:dgram`:**
+
+```javascript
+const dgram = require("node:dgram");
+const socket = dgram.createSocket("udp4");
+
+socket.on("message", (message, remote) => {
+    console.log(message.toString(), remote.address, remote.port);
+});
+
+socket.bind(4000);
+```
+
+**References:** [RFC 9293: TCP](https://www.rfc-editor.org/rfc/rfc9293), [RFC 768: UDP](https://www.rfc-editor.org/rfc/rfc768), [Node.js Net documentation](https://nodejs.org/api/net.html), [Node.js Datagram (UDP) documentation](https://nodejs.org/api/dgram.html).
+
+### 13.3 DNS (Domain Name System)
+
+**What:** DNS is a distributed naming system that returns records associated with domain names. A and AAAA records commonly provide IPv4 and IPv6 addresses.
+
+**Why:** People use hostnames instead of memorizing IP addresses, and service operators can change infrastructure without requiring users to change the hostname they enter.
+
+**Simplified resolution flow:**
+
+1. The browser and operating system check applicable caches and local configuration.
+2. A recursive resolver checks its cache or performs lookups on the client's behalf.
+3. If necessary, the resolver follows referrals through root and top-level-domain DNS infrastructure.
+4. An authoritative nameserver provides the requested record or response.
+5. The resolver returns the result, which may be cached according to its TTL.
+
+This is not a mandatory sequence for every query: a cache may already contain the answer.
+
+**Important record types:**
+
+| Record | Purpose |
+|---|---|
+| `A` | IPv4 address |
+| `AAAA` | IPv6 address |
+| `CNAME` | Alias to another DNS name |
+| `MX` | Mail-exchange servers |
+| `TXT` | Text records used for verification and other policies |
+| `NS` | Nameservers for a DNS zone |
+
+**TTL (Time To Live):** A record's TTL tells caches how long the record may be reused before refreshing it. After a DNS change, some clients may continue using cached answers until those answers expire.
+
+**Try it:** On Windows, run `nslookup example.com` or `nslookup -type=MX gmail.com`.
+
+DNS resolution does not establish a TCP connection and does not encrypt HTTP traffic; those are separate steps.
+
+**References:** [RFC 1034: DNS Concepts and Facilities](https://www.rfc-editor.org/rfc/rfc1034), [RFC 1035: DNS Implementation and Specification](https://www.rfc-editor.org/rfc/rfc1035), [Cloudflare: What is DNS?](https://www.cloudflare.com/learning/dns/what-is-dns/).
+
+### 13.4 TLS and HTTPS
+
+**What:** TLS (Transport Layer Security) protects data exchanged between endpoints. HTTPS is HTTP carried over TLS.
+
+**Why:** TCP reliability does not provide confidentiality or cryptographic integrity. HTTPS helps protect application data against eavesdropping and tampering and authenticates the server when certificate validation succeeds.
+
+TLS provides:
+- **Confidentiality:** protected application data is encrypted.
+- **Integrity:** unauthorized changes to protected records can be detected.
+- **Authentication:** certificate validation helps the client verify the server's identity.
+
+A certificate binds a hostname to a public key through a certificate chain. The browser validates the chain and hostname, along with relevant validity and trust conditions. A valid certificate does not prove that the website itself is honest or free of vulnerabilities.
+
+**Simplified TLS 1.3 flow:**
+
+1. Client sends a ClientHello with supported cryptographic parameters and key-share information.
+2. Server responds with selected parameters, key-share information, and its certificate chain.
+3. Client validates the certificate and hostname; the parties derive shared session keys.
+4. Subsequent application data is protected using the negotiated keys.
+
+For HTTP/1.1 and HTTP/2 over TLS, a typical new connection involves DNS resolution, a TCP handshake, a TLS handshake, and then HTTP. HTTP/3 uses QUIC over UDP and integrates TLS 1.3 into QUIC's connection setup.
+
+**References:** [RFC 8446: TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446), [MDN: Transport Layer Security (TLS)](https://developer.mozilla.org/en-US/docs/Web/Security/Transport_Layer_Security), [MDN: HTTPS](https://developer.mozilla.org/en-US/docs/Glossary/HTTPS).
+
+### 13.5 Sockets and Keep-Alive
+
+**What is a socket?** A socket is an operating-system communication endpoint exposed through an application API. A connected TCP socket is associated with connection state, including local/remote addresses and ports, sequence numbers, buffers, and retransmission state. It is a logical endpoint, not a dedicated physical cable.
+
+**HTTP connection reuse:** Persistent HTTP connections allow multiple exchanges to reuse a connection when supported by the protocol and client/server configuration. Reuse reduces the overhead of repeatedly establishing connections.
+
+**Do not confuse these concepts:**
+- **HTTP persistence / connection reuse:** use a connection for multiple HTTP exchanges.
+- **TCP keepalive probes:** probe an idle TCP connection to help detect an unreachable peer.
+- **Application heartbeat:** application-level messages used to check whether a peer or service is responsive.
+
+**Timeouts and cleanup:** Request/header timeouts limit how long clients may take to send a request. Keep-alive timeouts govern idle HTTP connections. Application deadlines bound work. TCP keepalive can help detect some unreachable peers. Behavior and defaults depend on the runtime and configuration; code must handle errors and release resources.
+
+**References:** [RFC 9112: HTTP/1.1 connection management](https://www.rfc-editor.org/rfc/rfc9112), [Node.js HTTP documentation](https://nodejs.org/api/http.html), [Node.js Net documentation](https://nodejs.org/api/net.html).
+
+### 13.6 Reverse Proxies
+
+**What:** A reverse proxy accepts requests on behalf of backend servers and forwards them to an appropriate destination.
+
+**Why:** It provides a stable public entry point and can handle routing, TLS termination, request limits, access logs, caching, and forwarding to internal services.
+
+```text
+Browser
+   |
+ HTTPS
+   |
+Reverse Proxy (e.g., Nginx)
+   |
+Internal API service
+   |
+Database / other dependencies
+```
+
+**Simplified Nginx example:**
+
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+This illustrative example listens for HTTP on port 80; a public deployment should configure HTTPS and certificate management. Forwarded headers must be trusted only when they come through trusted proxy infrastructure, because clients can otherwise spoof them.
+
+A reverse proxy can also perform load balancing, but the terms describe different responsibilities.
+
+**References:** [NGINX: Reverse Proxy](https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/), [NGINX: HTTPS server configuration](https://nginx.org/en/docs/http/configuring_https_servers.html).
+
+### 13.7 Load Balancers
+
+**What:** A load balancer distributes incoming requests or connections among eligible backend instances.
+
+**Why:** It helps use multiple instances for horizontal scaling and can stop routing new traffic to instances that fail health checks.
+
+**Common algorithms:**
+
+| Algorithm | Behavior |
+|---|---|
+| Round robin | Cycles through eligible instances |
+| Weighted round robin | Gives instances traffic according to configured weights |
+| Least connections | Prefers an instance with fewer active connections |
+| IP hash | Selects an instance using client IP information; NAT can concentrate clients on one instance |
+
+**Health checks:** A health check evaluates whether an instance should receive traffic. A basic `/health` endpoint may show that the process responds, but it does not necessarily prove all dependencies are healthy. Liveness and readiness checks can have different purposes.
+
+If one backend fails, the balancer may route new requests to healthy instances. In-flight requests are not automatically rescued; graceful draining, retries, and partial-failure handling need deliberate design.
+
+**Nginx upstream example:**
+
+```nginx
+upstream taskplexus_api {
+    server 127.0.0.1:3001;
+    server 127.0.0.1:3002;
+    server 127.0.0.1:3003;
+}
+
+server {
+    listen 80;
+
+    location /api/ {
+        proxy_pass http://taskplexus_api;
+    }
+}
+```
+
+A load balancer can itself become a bottleneck or single point of failure if its own deployment and dependencies are not designed for availability.
+
+**References:** [NGINX: HTTP Load Balancing](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/), [AWS: What is a load balancer?](https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/what-is-load-balancing.html).
+
+### 13.8 Complete Request–Response Lifecycle
+
+For a new request to `https://api.taskplexus.app/posts`, a simplified flow is:
+
+1. **URL parsing:** The browser identifies the scheme, hostname, port, and path.
+2. **DNS:** The hostname is resolved to an address, unless a suitable cached answer is available.
+3. **Transport setup:** For HTTP/1.1 or HTTP/2, TCP establishes a connection to the endpoint.
+4. **TLS:** The browser validates the server certificate and establishes cryptographic keys.
+5. **HTTP request:** The browser sends the method, path, headers, and optional body.
+6. **Reverse proxy:** The public entry point receives the request and forwards it to a selected backend.
+7. **Backend execution:** The application authenticates and authorizes the request, applies business logic, and may query a database.
+8. **HTTP response:** The backend returns a status, headers, and body through the proxy.
+9. **Client processing:** The browser reads the response and JavaScript can process the JSON.
+
+This is a conceptual flow for a new HTTPS connection. Existing connections, caches, TLS session resumption, and protocol negotiation can change or skip some setup steps. HTTP/3 uses QUIC rather than TCP.
+
+**Latency can come from** DNS lookup, connection setup, network round trips, proxy processing, backend queues, database queries, response transfer, or browser work. Measure each part before assuming the database is the bottleneck.
+
+**Core distinctions to remember:**
+- TCP transports bytes; HTTP defines application request/response semantics.
+- DNS resolves names; it does not establish the transport connection.
+- TLS provides security; TCP reliability alone does not.
+- HTTP connection reuse and TCP keepalive probes are different mechanisms.
+- Reverse proxies front services; load balancers distribute traffic. One product can do both.
+- Horizontal scaling adds instances; a load balancer distributes traffic among eligible instances.
+
+**References:** [MDN: How the web works](https://developer.mozilla.org/en-US/docs/Learn_web_development/Getting_started/Web_standards/How_the_web_works), [MDN: HTTP overview](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview), [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110).
+
+## 14. References
 
 These references provide additional detail on the concepts covered above.
 
