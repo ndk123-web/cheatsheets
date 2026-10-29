@@ -30,6 +30,8 @@
 14. [References](#14-references)
 15. [Concurrency Control and Resilience Patterns](#15-concurrency-control-and-resilience-patterns)
 16. [Rate Limiting](#16-rate-limiting)
+17. [System Architecture Styles](#17-system-architecture-styles)
+18. [Application Structure Patterns](#18-application-structure-patterns)
 
 ---
 
@@ -1314,3 +1316,247 @@ Redis is a common choice, not a requirement. A gateway or another shared state s
 - [Redis documentation: INCR](https://redis.io/docs/latest/commands/incr/)
 - [Cloudflare: What is rate limiting?](https://www.cloudflare.com/learning/bots/what-is-rate-limiting/)
 - [AWS API Gateway: Throttling requests](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html)
+
+---
+
+## 17. System Architecture Styles
+
+System architecture describes the major parts of a software system, how they are deployed, and how they communicate. These styles are not mutually exclusive: one application can combine several of them.
+
+### 17.1 Client–Server Architecture
+
+A client sends requests to a server, and the server returns responses.
+
+```text
+React / Mobile Client
+        |
+      HTTPS
+        |
+     Go API
+        |
+   PostgreSQL
+```
+
+**Example:** TaskPlexus's React frontend requests a task list from its Go backend.
+
+**Benefits:** Clear separation between user interface and backend responsibilities.
+
+**Trade-offs:** The server and its dependencies must be operated, secured, and scaled appropriately.
+
+### 17.2 Monolithic Architecture
+
+A monolith packages multiple application capabilities into one deployable application.
+
+```text
+          Go Backend (one deployment)
+       /          |          \
+    Auth         Tasks      Analytics
+                   |
+              PostgreSQL
+```
+
+**Benefits:** Simple deployment and local development; function calls can stay inside one process.
+
+**Trade-offs:** The whole application may need to be deployed together, and modules can become tightly coupled without good internal boundaries.
+
+A monolith can still have well-separated modules and layers. Monolithic describes the deployment unit, not whether the code is organized well.
+
+### 17.3 Microservices Architecture
+
+The system is split into services that can be developed, deployed, and scaled independently.
+
+```text
+              API Gateway
+             /     |      \
+          Auth    Tasks   Analytics
+           |        |         |
+        Auth DB   Task DB  Analytics DB
+```
+
+This is a conceptual diagram; services do not always need separate databases, but independently owned data is common.
+
+**Benefits:** Independent deployments and scaling; teams can own services separately.
+
+**Trade-offs:** Network failures, observability, service-to-service security, deployment coordination, and distributed data consistency become more difficult.
+
+**Use when:** Independent scaling or ownership provides enough value to justify the operational complexity. Microservices are not automatically better than a modular monolith.
+
+### 17.4 Event-Driven Architecture
+
+Components communicate by publishing and consuming events, often through a broker or durable queue.
+
+```text
+Task Service
+     |
+     v
+ Event Broker
+  /    |     \
+Analytics Notifications AI Summary
+```
+
+When a task is completed, the service publishes a `TaskCompleted` event. Consumers can update analytics, send notifications, or refresh an AI summary asynchronously.
+
+**Benefits:** Loose coupling and asynchronous processing.
+
+**Trade-offs:** Duplicate delivery, retries, event ordering, monitoring, and eventual consistency must be handled deliberately.
+
+Useful supporting techniques include idempotent consumers, bounded retries, dead-letter queues (DLQs), and the transactional outbox pattern.
+
+### 17.5 Serverless Architecture
+
+Application code runs in managed functions or other cloud-managed execution services, often triggered by HTTP requests, events, or schedules.
+
+**Example:** A function processes a task-completion event without requiring the team to manage a continuously running application server for that function.
+
+**Benefits:** Less infrastructure management and scaling handled by the platform.
+
+**Trade-offs:** Platform constraints, execution limits, cold-start latency in some environments, observability, and provider-specific dependencies.
+
+### 17.6 How the styles can combine
+
+TaskPlexus could be a client–server system with a monolithic Go backend, layered internal code, and an event queue for background notifications. It does not need to become microservices just because it uses events.
+
+| Style | Main question it addresses |
+|---|---|
+| Client–Server | Which component requests work and which serves it? |
+| Monolith | What is deployed as one application? |
+| Microservices | Which capabilities are independently deployable services? |
+| Event-Driven | How do components communicate through events? |
+| Serverless | Who manages execution infrastructure and how is code invoked? |
+
+---
+
+## 18. Application Structure Patterns
+
+Application structure patterns describe how code inside an application is divided and how dependencies flow. They can be combined with an overall system architecture.
+
+### 18.1 Layered Architecture
+
+Organizes code into layers with distinct responsibilities.
+
+```text
+HTTP Handler / Controller
+          |
+          v
+   Service / Use Case
+          |
+          v
+       Repository
+          |
+          v
+       Database
+```
+
+- **Handler/controller:** Parses requests and creates responses.
+- **Service/use case:** Implements application workflows and business rules.
+- **Repository:** Encapsulates data access.
+- **Database:** Persists data.
+
+**Benefits:** Clear responsibilities and easier testing.
+
+**Trade-offs:** Too many unnecessary layers can add indirection. Keep boundaries meaningful.
+
+### 18.2 MVC: Model–View–Controller
+
+MVC separates responsibilities commonly associated with user interaction:
+
+- **Model:** Represents application data and/or domain behavior, depending on the framework.
+- **View:** Presents information to the user.
+- **Controller:** Receives input and coordinates the response.
+
+For example, a web controller accepts a task-creation request, invokes application logic, and returns a response or renders a view.
+
+MVC is an application design pattern, not a database concurrency mechanism. Frameworks vary in their exact interpretation, and a React frontend with a Go API does not have to follow classic server-rendered MVC.
+
+### 18.3 Clean Architecture
+
+Clean Architecture separates domain rules and application use cases from infrastructure details. The key dependency rule is that source-code dependencies point inward toward policies and business rules.
+
+A simplified conceptual view:
+
+```text
+Frameworks / Database / HTTP
+            |
+            v
+      Adapters
+            |
+            v
+    Application Use Cases
+            |
+            v
+       Domain Rules
+```
+
+The diagram is conceptual: interfaces and dependency-injection details determine the actual compile-time dependency direction.
+
+**Benefits:** Business logic can be tested without a live database or web framework, and infrastructure can be replaced with less impact on core rules.
+
+**Trade-offs:** Additional interfaces and layers can be unnecessary for a very small application.
+
+### 18.4 Hexagonal Architecture (Ports and Adapters)
+
+The application core defines ports—interfaces describing what it needs. Adapters implement those ports for specific technologies.
+
+Example: a planner use case depends on a `Planner` interface. One adapter calls Gemini; another uses a local model or a test fake.
+
+```text
+Gemini Adapter ----\
+                    >---- Planner Port ---- Application Core
+Local Model Adapter/
+```
+
+**Benefit:** External technologies can change without forcing business logic to depend directly on them.
+
+**Trade-off:** Interfaces should represent real boundaries, not be added mechanically to every function.
+
+Clean Architecture and Hexagonal Architecture are related approaches, not mutually exclusive alternatives.
+
+### 18.5 Modular Monolith
+
+A modular monolith is one deployable application internally divided into modules with explicit boundaries, such as Auth, Tasks, Goals, and Analytics.
+
+**Benefits:** Simpler operations than microservices while preserving internal separation.
+
+**Trade-offs:** Modules can become coupled if boundaries are not enforced. A shared deployment also means a release may affect the whole application.
+
+This is often a useful starting point before considering service extraction.
+
+### 18.6 These concepts are different dimensions
+
+A single system can be:
+
+- Client–server at the system level.
+- A monolith at deployment time.
+- Layered or Clean Architecture in its code structure.
+- MVC-like in a web module.
+- Event-driven for asynchronous work.
+- Backed by PostgreSQL using MVCC for database concurrency control.
+
+These choices are compatible because they address different questions.
+
+### 18.7 Do not confuse MVC with MVCC
+
+**MVC — Model–View–Controller:** An application design pattern for organizing responsibilities.
+
+**MVCC — Multi-Version Concurrency Control:** A database mechanism that manages concurrent access using multiple versions or snapshots of data. PostgreSQL uses MVCC to support concurrency and snapshot-based reads.
+
+MVCC is not an application architecture and is not a variant of MVC.
+
+### Quick Revision
+
+- **System architecture:** Overall components, communication, and deployment.
+- **Application structure:** How code and dependencies are organized within an application.
+- **MVC:** Model, View, Controller.
+- **Clean Architecture:** Keep core business rules independent of infrastructure details.
+- **Hexagonal Architecture:** Isolate the core behind ports and adapters.
+- **Modular monolith:** One deployment with clear internal module boundaries.
+- **MVCC:** Database concurrency-control mechanism, not an architecture pattern.
+
+### References
+
+- [Microsoft Azure Architecture Center](https://learn.microsoft.com/en-us/azure/architecture/)
+- [Martin Fowler: Patterns of Enterprise Application Architecture](https://martinfowler.com/eaaCatalog/)
+- [Robert C. Martin: The Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+- [Alistair Cockburn: Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)
+- [PostgreSQL: Introduction to MVCC](https://www.postgresql.org/docs/current/mvcc-intro.html)
+
