@@ -28,6 +28,7 @@
     - [Load Balancers](#137-load-balancers)
     - [Complete Request–Response Lifecycle](#138-complete-requestresponse-lifecycle)
 14. [References](#14-references)
+15. [Concurrency Control and Resilience Patterns](#15-concurrency-control-and-resilience-patterns)
 
 ---
 
@@ -935,3 +936,165 @@ These references provide additional detail on the concepts covered above.
 ---
 
 **Next topic:** Capacity estimation — estimating users, requests per second, storage, and bandwidth before choosing an architecture.
+
+
+---
+
+## 15. Concurrency Control and Resilience Patterns
+
+This section covers two different kinds of problems:
+
+- **Concurrency control:** Preventing simultaneous operations from corrupting shared data.
+- **Resilience:** Preventing a temporary failure in one service from spreading through the system.
+
+### 15.1 Pessimistic vs. Optimistic Locking
+
+Imagine an account has a balance of ₹1,000. Two requests arrive at nearly the same time: one tries to withdraw ₹800 and the other tries to withdraw ₹700. Both must not be allowed to spend the same starting balance.
+
+#### Pessimistic locking: lock before modifying
+
+The application assumes a conflicting update may occur and locks the relevant database row before reading or changing it. A competing transaction may have to wait.
+
+PostgreSQL example:
+
+```sql
+BEGIN;
+
+SELECT balance
+FROM accounts
+WHERE id = 101
+FOR UPDATE;
+
+-- Application validates that the balance is sufficient.
+UPDATE accounts
+SET balance = balance - 800
+WHERE id = 101;
+
+COMMIT;
+```
+
+`SELECT ... FOR UPDATE` locks the selected row until the transaction ends. The application must validate the balance and perform the update in the same transaction. In production, use a conditional update or appropriate isolation and validation so concurrent requests cannot produce an invalid balance.
+
+**Use when:** Conflicting writes are likely and correctness requires serialized access, such as inventory allocation or account updates.
+
+#### Optimistic locking: detect a conflict when saving
+
+The application assumes conflicts are relatively uncommon. A version number is read with the data and checked when updating it.
+
+Initial row: `balance = 1000, version = 1`.
+
+```sql
+UPDATE accounts
+SET balance = balance - 800,
+    version = version + 1
+WHERE id = 101
+  AND version = 1
+  AND balance >= 800;
+```
+
+- **One row updated:** the update succeeded.
+- **Zero rows updated:** the row was changed, the version was different, or the balance condition failed. Read the current state and revalidate before deciding whether to retry.
+
+The conditional update is atomic. Do not blindly repeat a stale update; re-check business rules using the latest data.
+
+**Use when:** Concurrent conflicts are relatively rare, such as editing a profile or document where a version conflict can be shown or safely resolved.
+
+| Property | Pessimistic locking | Optimistic locking |
+|---|---|---|
+| Strategy | Acquire a lock before modifying | Check a version or condition at update time |
+| Conflict behavior | A competing transaction may wait | An update may affect zero rows |
+| Main cost | Lock contention and possible deadlocks | Conflict handling and possible retries |
+| Good fit | Frequent conflicts / serialized updates | Infrequent conflicts |
+
+### 15.2 Retry with Backoff
+
+A retry repeats an operation after a failure that may be temporary, such as a transient network error or a selected service-unavailable response. Retrying permanent failures (for example, invalid input) is generally pointless.
+
+Use **bounded retries** and exponential backoff instead of retrying continuously:
+
+```text
+Attempt 1 → fails
+Wait ~1 second
+Attempt 2 → fails
+Wait ~2 seconds
+Attempt 3 → fails
+Wait ~4 seconds
+Attempt 4 → stop if the retry limit is reached
+```
+
+The delays are illustrative. Real systems should configure maximum attempts, a maximum delay, an overall deadline, and often **jitter** (random variation in the delay) to prevent many clients from retrying simultaneously.
+
+**Important:** A timeout does not prove the operation failed. For example, a payment provider may have charged the customer but the response may have been lost. Use an idempotency key or another deduplication strategy before retrying operations that create side effects.
+
+### 15.3 Circuit Breaker Pattern
+
+A circuit breaker protects a caller from repeatedly invoking a dependency that is failing. It does not repair the dependency; it limits repeated calls and gives the dependency time to recover.
+
+#### Example: Order Service calling Payment Service
+
+```text
+Customer → Order Service → Circuit Breaker → Payment Service
+```
+
+Suppose Payment Service starts timing out. A configured circuit breaker observes failures within a time window. When its failure threshold is exceeded, it opens the circuit.
+
+**State lifecycle:**
+
+```text
+CLOSED
+  │ Requests flow normally; failures are monitored
+  │ Failure threshold exceeded
+  ▼
+OPEN
+  │ Calls fail fast / are blocked for a cooldown period
+  │ Cooldown expires
+  ▼
+HALF-OPEN
+  ├── Test request(s) succeed → CLOSED
+  └── Test request(s) fail    → OPEN
+```
+
+- **CLOSED:** Calls are allowed; the breaker monitors outcomes.
+- **OPEN:** Calls are short-circuited, avoiding repeated slow or failing calls.
+- **HALF-OPEN:** A limited number of test calls are allowed to check whether the dependency recovered.
+
+Thresholds, cooldowns, and the number of test calls depend on the implementation. Recovery is normally automatic: after the cooldown, the breaker enters half-open and returns to closed if test calls succeed. Engineers do not usually need to manually close it. Restarting the failed service and changing the circuit breaker's state are separate things.
+
+#### What if the payment service is back online?
+
+1. The circuit may remain open until its cooldown expires.
+2. It transitions to half-open and allows limited test traffic.
+3. If the tests succeed, normal traffic resumes in the closed state.
+4. If they fail, it opens again and waits before another test.
+
+A successful health check alone may not prove that the actual operation is working. The half-open test should be representative enough for the dependency and the configured breaker.
+
+### 15.4 Retry vs. Circuit Breaker
+
+| Retry | Circuit breaker |
+|---|---|
+| Repeats an individual failed operation | Stops repeated calls to a dependency after failures cross a threshold |
+| Helps when a failure is transient | Helps prevent cascading failures and wasted work |
+| Needs attempt limits, deadlines, and backoff | Uses states, failure criteria, and a recovery interval |
+| Can increase load if poorly configured | Can fail fast while the dependency recovers |
+
+They can be used together. Keep retries bounded, use backoff and jitter, respect the overall request deadline, and avoid retrying at multiple layers without a clear budget. Otherwise, retries can multiply traffic during an outage.
+
+**Payment safety:** If a payment request times out, its outcome may be unknown. A retry should reuse the same idempotency key where supported; do not assume a timeout means no charge occurred. When a circuit is open, return a clear temporary failure or use an explicitly designed pending/fallback workflow—never report an unconfirmed payment as successful.
+
+### 15.5 Quick Revision
+
+- **Pessimistic locking:** Lock first; conflicting transactions may wait.
+- **Optimistic locking:** Check a version/condition at write time; handle conflicts.
+- **Retry:** Try a transiently failed operation again, with strict limits and backoff.
+- **Circuit breaker:** Stop calling a repeatedly failing dependency temporarily.
+- **Automatic recovery:** OPEN → HALF-OPEN after cooldown; success closes the circuit, failure opens it again.
+- **Idempotency:** Makes repeating a logical operation safe against duplicate side effects when correctly implemented.
+
+### References
+
+- [PostgreSQL: Explicit Locking](https://www.postgresql.org/docs/current/explicit-locking.html)
+- [PostgreSQL: UPDATE](https://www.postgresql.org/docs/current/sql-update.html)
+- [Martin Fowler: Circuit Breaker](https://martinfowler.com/bliki/CircuitBreaker.html)
+- [Microsoft Azure Architecture Center: Circuit Breaker pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/circuit-breaker)
+- [AWS Builders' Library: Timeouts, retries, and backoff with jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
