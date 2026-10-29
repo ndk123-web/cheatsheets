@@ -29,6 +29,7 @@
     - [Complete Request–Response Lifecycle](#138-complete-requestresponse-lifecycle)
 14. [References](#14-references)
 15. [Concurrency Control and Resilience Patterns](#15-concurrency-control-and-resilience-patterns)
+16. [Rate Limiting](#16-rate-limiting)
 
 ---
 
@@ -1098,3 +1099,218 @@ They can be used together. Keep retries bounded, use backoff and jitter, respect
 - [Martin Fowler: Circuit Breaker](https://martinfowler.com/bliki/CircuitBreaker.html)
 - [Microsoft Azure Architecture Center: Circuit Breaker pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/circuit-breaker)
 - [AWS Builders' Library: Timeouts, retries, and backoff with jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
+
+
+---
+
+## 16. Rate Limiting
+
+**What:** Rate limiting controls how frequently a client or group of clients can call an API during a defined period.
+
+**Why it matters:** It helps protect backend capacity, reduce abusive traffic, limit brute-force attempts, and control usage of costly endpoints. Rate limiting is one layer of defense; it does not, by itself, stop every distributed denial-of-service (DDoS) attack.
+
+### 16.1 Running Example: TaskPlexus API
+
+Suppose the endpoint \`GET /api/products\` has a limit of **5 requests per minute per user**.
+
+| Request | User's count | Decision |
+|---:|---:|---|
+| 1 | 1 of 5 | Allow |
+| 2 | 2 of 5 | Allow |
+| 3 | 3 of 5 | Allow |
+| 4 | 4 of 5 | Allow |
+| 5 | 5 of 5 | Allow |
+| 6 | 6 of 5 | Reject |
+
+When the limit is exceeded, the API commonly responds with **HTTP 429 Too Many Requests**. A response may include \`Retry-After\` to indicate when the client should try again, when that timing is known.
+
+### 16.2 Approach 1: Fixed Window Counter
+
+Divide time into fixed intervals and count requests within each interval. For a one-minute window, a counter is maintained for each user and minute. It resets for the next window.
+
+Example:
+
+- From 10:00:00 to 10:00:59, a user makes five requests. All five are allowed.
+- Further requests in that window are rejected.
+- At 10:01:00, the next window begins and the user gets a fresh count.
+
+**Simple implementation idea:** Maintain a counter keyed by identity and window, and expire it when the window ends.
+
+**Main weakness — boundary bursts:** A user could make five requests at 10:00:59 and another five at 10:01:00. Ten requests may arrive within roughly one second even though the configured limit is five per minute.
+
+**Use when:** Simplicity and low storage overhead matter, and short bursts around a window boundary are acceptable.
+
+### 16.3 Approach 2: Sliding Window
+
+A sliding window evaluates traffic over a rolling interval instead of resetting all usage at a fixed clock boundary.
+
+For a limit of five requests in the last 60 seconds, a request is allowed only when fewer than five qualifying requests fall within the rolling interval.
+
+There are two common variants:
+
+**Sliding Window Log**
+
+- Store each request's timestamp for a client.
+- For each new request, discard timestamps older than the rolling interval.
+- Count the remaining timestamps. Allow the request if the count is below the limit; otherwise reject it.
+- Record the new timestamp when allowed.
+
+This can be accurate for the defined interval, but storing and processing individual timestamps can consume more memory and computation at high request volumes.
+
+**Sliding Window Counter**
+
+- Keep counts for the current and previous fixed windows.
+- Estimate the rolling-window count by weighting the previous window according to how much of it overlaps the rolling interval, then combine that estimate with the current-window count.
+- This reduces storage compared with a full timestamp log, but the result is an approximation.
+
+**Example:** At 10:01:00, the system checks requests from 10:00:00 through 10:01:00. A request from 10:00:00 eventually ages out of the 60-second interval, freeing capacity. The exact boundary convention (inclusive or exclusive) should be defined consistently.
+
+**Use when:** You want a more consistent rolling limit and can justify the added implementation complexity.
+
+### 16.4 Approach 3: Token Bucket
+
+A token bucket controls the long-term rate while allowing short bursts.
+
+Imagine a bucket with these settings:
+
+- Capacity: five tokens.
+- Each accepted request consumes one token.
+- One token is added every 12 seconds, up to the bucket's capacity.
+- If the bucket is empty, a new request is rejected until a token becomes available.
+
+Example:
+
+| Event | Tokens remaining | Decision |
+|---|---:|---|
+| Bucket starts full | 5 | — |
+| Request 1 | 4 | Allow |
+| Request 2 | 3 | Allow |
+| Request 3 | 2 | Allow |
+| Request 4 | 1 | Allow |
+| Request 5 | 0 | Allow |
+| Immediate request 6 | 0 | Reject |
+| One token refills | 1 | Next request can be allowed |
+
+A full bucket permits an initial burst of up to five requests. After the burst, requests are paced by the refill rate. Tokens do not accumulate beyond the configured capacity.
+
+**Use when:** Occasional bursts are acceptable but sustained traffic should be controlled, such as API gateways and general-purpose APIs.
+
+### 16.5 Compare the Algorithms
+
+| Property | Fixed Window Counter | Sliding Window | Token Bucket |
+|---|---|---|---|
+| Tracks | Count per fixed interval | Requests or estimated count in a rolling interval | Available tokens |
+| Boundary bursts | Can be significant | Reduces fixed-boundary bursts | Allows bursts up to bucket capacity |
+| Storage / complexity | Low | Log variant can be expensive; counter variant is approximate | Moderate |
+| Main control | Requests per fixed window | Requests during a rolling interval | Burst capacity plus refill rate |
+| Typical fit | Simple quotas | More consistent rolling limits | Controlled bursts and sustained-rate control |
+
+No algorithm is universally best. Choose based on whether you need a hard rolling count, a simple quota, or controlled bursts.
+
+### 16.6 Rate-Limit Scope: Per User vs. Global
+
+The algorithm and the scope are separate design choices. The algorithm defines **how** the limit is enforced; the scope defines **whose traffic shares the limit**.
+
+**Per-user limit**
+
+Rule: each authenticated user can make five requests per minute.
+
+- User A uses five requests and reaches the limit.
+- User B has used only two requests and can still make three more.
+- User A's limit does not consume User B's allowance.
+
+A Redis key design could use a user identifier, endpoint or policy, and time window, for example:
+
+\`rate_limit:user:101:products:window\`
+
+**Global limit**
+
+Rule: all clients together can make 1,000 requests per minute to a particular service or endpoint.
+
+If User A sends 400 requests, User B sends 350, and User C sends 250, the shared total is 1,000. The next request may be rejected regardless of which user sends it.
+
+An illustrative key could be:
+
+\`rate_limit:global:products:window\`
+
+**Other useful scopes**
+
+- **Per IP address:** Useful for unauthenticated endpoints, but shared networks can place many legitimate users behind one IP, and clients may use changing IPs.
+- **Per API key or tenant:** Useful for developer APIs and multi-tenant services with different plans.
+- **Per endpoint or operation:** A costly AI-generation endpoint may need a stricter policy than a simple health check.
+- **Global service limit:** Protects total backend or downstream dependency capacity.
+
+A production API may enforce more than one policy, such as per-user limits plus a global service limit. A request must pass all applicable policies.
+
+### 16.7 Where Rate Limiting Fits in the Request Path
+
+A common flow is:
+
+\`\`\`text
+Client
+  |
+  v
+Reverse Proxy / API Gateway
+  |
+  v
+Rate-Limit Check
+  |                 |
+  | allowed         | exceeded
+  v                 v
+Backend Handler    HTTP 429
+  |
+  v
+Database / Dependencies
+\`\`\`
+
+Rate limiting is often implemented at an API gateway, reverse proxy, or backend middleware. Applying it before expensive handler and database work helps reject excess requests early. Some systems also enforce business-specific limits inside the application.
+
+### 16.8 Multiple Backend Instances and Redis
+
+Suppose the API runs on three backend instances behind a load balancer. If each instance keeps its own in-memory counter, the same user may receive a separate allowance on each instance. A nominal limit of five could effectively become fifteen, depending on routing and counter behavior.
+
+A shared store such as Redis can keep rate-limit state visible to all instances:
+
+\`\`\`text
+                 Load Balancer
+                /      |      \\
+             API A    API B    API C
+                \\      |      /
+                    Redis
+             shared rate-limit state
+\`\`\`
+
+**Concurrency matters:** Incrementing a counter and checking the limit must be coordinated atomically. If separate commands allow multiple concurrent requests to observe a count below the limit before any of them increments it, the system can admit too many requests. Use an appropriate atomic operation, transaction, or Lua script for the chosen algorithm, and consider key expiry and failure behavior.
+
+Redis is a common choice, not a requirement. A gateway or another shared state system may provide the needed coordination. A single-instance in-memory limiter can be appropriate for a small application if its limitations are understood.
+
+### 16.9 Practical Design Considerations
+
+- **Identity:** Decide how clients are identified and authenticate users before trusting user IDs or API keys.
+- **Proxy headers:** Do not trust client-supplied IP headers unless they are set by trusted proxy infrastructure.
+- **Atomicity:** Prevent concurrent requests from bypassing the limit.
+- **Response behavior:** Return HTTP 429 and, where useful, a \`Retry-After\` header.
+- **Retry behavior:** Clients should avoid immediate repeated retries. Respect \`Retry-After\` when provided and use bounded backoff with jitter when appropriate.
+- **Fairness:** Consider whether one tenant can consume the whole global allowance.
+- **Failure policy:** Decide what happens if the rate-limit store is unavailable. Failing open preserves availability but may expose the service to overload; failing closed protects capacity but may reject legitimate traffic. The choice depends on endpoint risk.
+- **Observability:** Monitor allowed and rejected request counts, limit-store latency/errors, and which policies are frequently exceeded.
+- **Security:** Rate limiting can slow brute-force attempts, but authentication controls, account protections, and broader DDoS defenses are still necessary.
+
+### 16.10 Quick Revision
+
+- **Rate limiting:** Controls how frequently clients can make requests.
+- **HTTP 429:** Indicates that the client has sent too many requests.
+- **Fixed Window:** Simple counter per fixed interval; boundary bursts are possible.
+- **Sliding Window Log:** Tracks individual timestamps in a rolling interval.
+- **Sliding Window Counter:** Estimates rolling usage from adjacent window counts.
+- **Token Bucket:** Allows a bounded burst and controls sustained traffic using token refill.
+- **Scope:** Can be per user, IP, API key, tenant, endpoint, or global.
+- **Shared state:** Multiple backend instances need coordinated state for a consistent shared limit.
+- **Atomic check:** Counter/token updates and limit enforcement must handle concurrent requests safely.
+
+### References
+
+- [RFC 6585, Section 4: 429 Too Many Requests](https://www.rfc-editor.org/rfc/rfc6585#section-4)
+- [Redis documentation: INCR](https://redis.io/docs/latest/commands/incr/)
+- [Cloudflare: What is rate limiting?](https://www.cloudflare.com/learning/bots/what-is-rate-limiting/)
+- [AWS API Gateway: Throttling requests](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html)
