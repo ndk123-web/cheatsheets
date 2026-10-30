@@ -32,6 +32,7 @@
 16. [Rate Limiting](#16-rate-limiting)
 17. [System Architecture Styles](#17-system-architecture-styles)
 18. [Application Structure Patterns](#18-application-structure-patterns)
+19. [Design Patterns in JavaScript](#19-design-patterns-in-javascript)
 
 ---
 
@@ -1560,3 +1561,215 @@ MVCC is not an application architecture and is not a variant of MVC.
 - [Alistair Cockburn: Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)
 - [PostgreSQL: Introduction to MVCC](https://www.postgresql.org/docs/current/mvcc-intro.html)
 
+
+---
+
+## 19. Design Patterns in JavaScript
+
+### References
+- [Refactoring.Guru — Design Patterns](https://refactoring.guru/design-patterns)
+- [MDN — JavaScript Classes](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes)
+- [MDN — Closures](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Closures)
+- [MDN — Modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules)
+
+### Creational Patterns
+
+#### 19.1 Factory Method
+**Why:** Creates the right object without exposing creation logic to the caller.
+
+```js
+function createNotifier(type) {
+  if (type === "email") return { send: msg => console.log("Email:", msg) };
+  if (type === "sms") return { send: msg => console.log("SMS:", msg) };
+  throw new Error("Unknown notifier");
+}
+const notifier = createNotifier("email");
+notifier.send("Task completed");
+```
+
+#### 19.2 Builder
+**Why:** Builds objects step by step when many optional settings exist.
+
+```js
+const task = {
+  title: "Study System Design",
+  priority: "high",
+  tags: ["learning"]
+};
+```
+
+#### 19.3 Singleton
+**Why:** Provides one shared instance within a runtime when shared state is genuinely needed.
+
+```js
+class Config {
+  static instance;
+  constructor() {
+    if (Config.instance) return Config.instance;
+    this.env = "production";
+    Config.instance = this;
+  }
+}
+const config = new Config();
+```
+
+### Structural Patterns
+
+#### 19.4 Adapter
+**Why:** Makes an incompatible interface work with the interface the application expects.
+
+```js
+const paymentAdapter = {
+  payInRupees: rupees => razorpay.pay({ amount: rupees * 100 })
+};
+```
+
+#### 19.5 Decorator
+**Why:** Adds behavior around an existing function without changing its original implementation.
+
+```js
+const withLogging = fn => (...args) => {
+  console.log("Calling function");
+  return fn(...args);
+};
+const saveTask = withLogging(task => "Saved: " + task);
+```
+
+#### 19.6 Facade
+**Why:** Gives callers one simple interface to a multi-step subsystem.
+
+```js
+const checkout = {
+  async complete(order) {
+    await payment.charge(order);
+    await inventory.reserve(order);
+    await email.sendReceipt(order);
+  }
+};
+```
+
+#### 19.7 Proxy
+**Why:** Controls access to an object, for example to add caching or authorization.
+
+```js
+const cachedAPI = new Proxy(api, {
+  get(target, property) {
+    console.log("Accessing:", property);
+    return target[property];
+  }
+});
+```
+
+### Behavioral Patterns
+
+#### 19.8 Strategy
+**Why:** Makes algorithms interchangeable without changing the code that uses them.
+
+```js
+const planners = {
+  gemini: prompt => gemini.generate(prompt),
+  local: prompt => localModel.generate(prompt)
+};
+const result = await planners.gemini("Plan my day");
+```
+
+#### 19.9 Observer
+**Why:** Notifies multiple subscribers when an event occurs.
+
+```js
+const listeners = [];
+const subscribe = fn => listeners.push(fn);
+const publish = event => listeners.forEach(fn => fn(event));
+subscribe(event => console.log("Received:", event));
+publish("task.completed");
+```
+
+#### 19.10 Command
+**Why:** Encapsulates an action so it can be queued, logged, retried, or undone.
+
+```js
+const completeTask = {
+  execute: task => ({ ...task, status: "completed" })
+};
+const updatedTask = completeTask.execute({ id: 1, status: "pending" });
+```
+
+#### 19.11 State
+**Why:** Changes behavior according to an object's current state.
+
+```js
+const taskActions = {
+  pending: () => "Start task",
+  inProgress: () => "Complete task",
+  completed: () => "Task is already complete"
+};
+const action = taskActions.inProgress();
+```
+
+### Common Application / Backend Patterns
+
+#### 19.12 Repository
+**Why:** Separates data-access logic from business logic.
+
+```js
+const taskRepository = {
+  findById: id => db.tasks.findOne({ id }),
+  save: task => db.tasks.insertOne(task)
+};
+```
+
+#### 19.13 Dependency Injection
+**Why:** Supplies dependencies from outside, making code easier to test and replace.
+
+```js
+class TaskService {
+  constructor(repository) {
+    this.repository = repository;
+  }
+}
+const service = new TaskService(taskRepository);
+```
+
+#### 19.14 Unit of Work
+**Why:** Coordinates multiple database changes within one transaction.
+
+```js
+const session = await mongoose.startSession();
+await session.withTransaction(async () => {
+  await accounts.updateOne({ id: from }, { $inc: { balance: -100 } }, { session });
+  await accounts.updateOne({ id: to }, { $inc: { balance: 100 } }, { session });
+});
+await session.endSession();
+```
+
+#### 19.15 Chain of Responsibility
+**Why:** Passes a request through a sequence of handlers, such as authentication and rate limiting.
+
+```js
+const pipeline = [authenticate, authorize, rateLimit, handleRequest];
+const run = req => pipeline.reduceRight(
+  (next, middleware) => () => middleware(req, next),
+  () => {}
+)();
+run(request);
+```
+
+### Quick Revision
+
+| Pattern | Why it is used |
+|---|---|
+| Factory Method | Centralizes object creation |
+| Builder | Constructs complex objects step by step |
+| Singleton | Shares one instance within a runtime |
+| Adapter | Converts one interface into another |
+| Decorator | Adds behavior without modifying the original |
+| Facade | Simplifies a complex subsystem |
+| Proxy | Controls access to an object |
+| Strategy | Switches algorithms at runtime |
+| Observer | Notifies subscribers about events |
+| Command | Encapsulates an action |
+| State | Changes behavior based on current state |
+| Repository | Separates persistence from business logic |
+| Dependency Injection | Supplies replaceable dependencies |
+| Unit of Work | Coordinates changes in a transaction |
+| Chain of Responsibility | Passes requests through handlers |
