@@ -3,20 +3,6 @@
 > **Study log — 31 October 2026**
 > Concise revision notes. Examples use a productivity application (TaskPlexus).
 
-## References
-- [PostgreSQL — Data Definition](https://www.postgresql.org/docs/current/ddl.html)
-- [PostgreSQL — Constraints and Foreign Keys](https://www.postgresql.org/docs/current/ddl-constraints.html)
-- [PostgreSQL — Joins](https://www.postgresql.org/docs/current/queries-table-expressions.html)
-- [MongoDB — Documents](https://www.mongodb.com/docs/manual/core/document/)
-- [MongoDB — Data Modeling](https://www.mongodb.com/docs/manual/data-modeling/)
-- [MongoDB — $lookup](https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/)
-- [Redis — Data Types](https://redis.io/docs/latest/develop/data-types/)
-- [Cassandra — Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html)
-- [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
-- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)
-- [PostgreSQL — Constraints and Referential Integrity](https://www.postgresql.org/docs/current/ddl-constraints.html)
-- [Database System Concepts — Functional Dependencies and Normalization (Silberschatz, Korth, Sudarshan)](https://www.db-book.com/)
-
 ## Contents
 1. [Database and DBMS](#1-database-and-dbms)
 2. [Relational vs. Non-Relational](#2-relational-vs-non-relational)
@@ -35,6 +21,8 @@
 - A DBMS provides storage/retrieval, concurrency, integrity, security, transactions (depending on the system), backup, and recovery.
 
 Examples: PostgreSQL, MySQL, MongoDB, Redis, Cassandra, Neo4j.
+
+**Section references:** [PostgreSQL — What Is PostgreSQL?](https://www.postgresql.org/docs/current/intro-whatis.html) · [MongoDB — What Is MongoDB?](https://www.mongodb.com/docs/manual/introduction/)
 
 ## 2. Relational vs. Non-Relational
 
@@ -84,6 +72,8 @@ Tasks are embedded in this example. MongoDB can also store references; embedding
 
 > NoSQL does not mean “no schema” or “no relationships.” Document databases can validate data and store references; graph databases explicitly model relationships.
 
+**Section references:** [MongoDB — Documents](https://www.mongodb.com/docs/manual/core/document/) · [MongoDB — Data Modeling](https://www.mongodb.com/docs/manual/data-modeling/)
+
 ## 3. Common Database Models
 
 | Model | Data organization | Example |
@@ -106,6 +96,8 @@ Tasks are embedded in this example. MongoDB can also store references; embedding
 | Relationships | Keys and joins | Embedding or references | Application logic | Edges and traversal |
 
 Most databases provide ways to store, identify, retrieve, index, and protect data. Exact mechanisms and guarantees vary. A SQL table is not equivalent to a MongoDB collection; a document reference is not equivalent to a relational foreign key.
+
+**Section references:** [Redis — Data Types](https://redis.io/docs/latest/develop/data-types/) · [Cassandra — Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html) · [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
 
 ## 4. Relationships: Foreign Keys and Joins
 
@@ -209,6 +201,8 @@ RETURN u.name, t.title;
 ```
 
 **Key idea:** Relational databases use keys and joins; document databases embed or reference; key-value applications connect keys in application logic; graph databases connect nodes with edges.
+
+**Section references:** [PostgreSQL — Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html) · [PostgreSQL — Table Expressions and Joins](https://www.postgresql.org/docs/current/queries-table-expressions.html) · [MongoDB — `$lookup`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/)
 
 ## 5. Normalization: 1NF, 2NF, 3NF, BCNF
 
@@ -407,6 +401,8 @@ Implication: `BCNF ⇒ 3NF ⇒ 2NF ⇒ 1NF`. The reverse implications do not gen
 
 Normalization is primarily taught for relational design. NoSQL systems often use different modeling strategies and may intentionally denormalize data to optimize access patterns.
 
+**Section references:** [Database System Concepts — Database Design and Normalization](https://www.db-book.com/) · [PostgreSQL — Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)
+
 ## 6. OLTP vs. OLAP
 
 **OLTP and OLAP describe workload/processing categories, not database models or separate query languages.** They describe the kind of work a system is optimized to perform.
@@ -468,6 +464,8 @@ Both can run on PostgreSQL. One performs an operational update; the other perfor
 
 One database can support both workloads. Larger systems may separate transactional databases from analytical warehouses to isolate and optimize workloads.
 
+**Section references:** [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)
+
 ## 7. Quick Revision
 - **Database:** Organized collection of data.
 - **DBMS:** Software that manages databases.
@@ -489,3 +487,27 @@ One database can support both workloads. Larger systems may separate transaction
 - **OLTP:** Frequent operational transactions.
 - **OLAP:** Analytical queries and aggregations.
 - **Key distinction:** Relational vs. non-relational describes the data model; OLTP vs. OLAP describes the workload.
+
+---
+
+## References
+
+### Database fundamentals and data models
+- [PostgreSQL — What Is PostgreSQL?](https://www.postgresql.org/docs/current/intro-whatis.html)
+- [MongoDB — Introduction](https://www.mongodb.com/docs/manual/introduction/)
+- [MongoDB — Documents](https://www.mongodb.com/docs/manual/core/document/)
+- [MongoDB — Data Modeling](https://www.mongodb.com/docs/manual/data-modeling/)
+- [Redis — Data Types](https://redis.io/docs/latest/develop/data-types/)
+- [Cassandra — Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html)
+- [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
+
+### Relationships, constraints, and queries
+- [PostgreSQL — Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)
+- [PostgreSQL — Table Expressions and Joins](https://www.postgresql.org/docs/current/queries-table-expressions.html)
+- [MongoDB — $lookup](https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/)
+
+### Functional dependencies and normalization
+- [Database System Concepts — Silberschatz, Korth, and Sudarshan](https://www.db-book.com/)
+
+### Transactions and analytical queries
+- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)
