@@ -13,14 +13,14 @@
 - [Redis — Data Types](https://redis.io/docs/latest/develop/data-types/)
 - [Cassandra — Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html)
 - [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
-- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)
+- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)\n- [PostgreSQL — Constraints and Referential Integrity](https://www.postgresql.org/docs/current/ddl-constraints.html)\n- [Database System Concepts — Functional Dependencies and Normalization (Silberschatz, Korth, Sudarshan)](https://www.db-book.com/)
 
 ## Contents
 1. [Database and DBMS](#1-database-and-dbms)
 2. [Relational vs. Non-Relational](#2-relational-vs-non-relational)
 3. [Common Database Models](#3-common-database-models)
 4. [Relationships: Foreign Keys and Joins](#4-relationships-foreign-keys-and-joins)
-5. [Normalization: 1NF, 2NF, 3NF](#5-normalization-1nf-2nf-3nf)
+5. [Normalization: 1NF, 2NF, 3NF, BCNF](#5-normalization-1nf-2nf-3nf)
 6. [OLTP vs. OLAP](#6-oltp-vs-olap)
 7. [Quick Revision](#7-quick-revision)
 
@@ -270,6 +270,129 @@ Split into:
 - `Departments(department_id, department_name)`
 
 **Remember:** Non-key attributes should not depend transitively on a candidate key.
+
+
+### 5.4 BCNF (Boyce–Codd Normal Form)
+**Rule:** For every non-trivial functional dependency (X \to Y), X must be a superkey.
+
+A **determinant** is the attribute (or attribute set) on the left side of a functional dependency.
+
+Example: `ClassAssignments(student, subject, instructor)`
+
+Assume:
+- Each instructor teaches exactly one subject.
+- A subject may have multiple instructors.
+- A student may take multiple subjects.
+
+Functional dependencies:
+- `(student, subject) → instructor`
+- `instructor → subject`
+
+Candidate keys:
+- `(student, subject)`
+- `(student, instructor)`
+
+But `instructor` alone is not a superkey: one instructor can teach multiple students. Therefore `instructor → subject` violates BCNF.
+
+Decompose into:
+- `InstructorSubject(instructor, subject)`
+- `StudentInstructor(student, instructor)`
+
+**3NF vs. BCNF:** This example can satisfy 3NF because `subject` is a prime attribute (part of a candidate key), while failing BCNF. BCNF does not allow this exception.
+
+**Remember:** Every determinant must be a superkey.
+
+### 5.5 Functional Dependencies and Keys
+A **functional dependency (FD)** `X → Y` means that a value of X uniquely determines the value of Y under the table's business rules.
+
+Example:
+- `student_id → student_name`
+- `course_id → course_name`
+- `(student_id, course_id) → grade`
+
+A functional dependency is a rule about the data model, not merely a pattern that happens to appear in the current sample rows.
+
+| Term | Meaning | Example |
+|---|---|---|
+| Superkey | Any attribute set that uniquely identifies a row | `{student_id, name}` |
+| Candidate key | A minimal superkey; removing any attribute means it no longer uniquely identifies a row | `{student_id}` |
+| Primary key | Candidate key selected as the table's main identifier | `student_id` |
+| Alternate key | Candidate key not selected as the primary key | `email` |
+| Composite key | Key made from multiple attributes | `(student_id, course_id)` |
+| Prime attribute | Attribute that belongs to at least one candidate key | `subject` in the BCNF example |
+
+Example: if both `student_id` and `email` are individually unique:
+- `{student_id}` and `{email}` are candidate keys.
+- `{student_id, name}` is a superkey, but not a candidate key because it is not minimal.
+
+### 5.6 Normalization Anomalies
+Redundant data can cause:
+- **Update anomaly:** The same fact must be updated in multiple rows; missing one creates inconsistent data.
+- **Insert anomaly:** A fact cannot be inserted without inserting an unrelated fact.
+- **Delete anomaly:** Deleting one row unintentionally removes the only stored copy of another fact.
+
+Normalization separates facts according to their dependencies, reducing these anomalies.
+
+### 5.7 Denormalization
+**Pattern:** Intentionally duplicate or precompute data to optimize a measured read workload.
+
+Example: an `orders` table may store `customer_name` alongside `customer_id`, even though the name also exists in `customers`.
+
+**Why use it?**
+- Reduce joins for frequent reads.
+- Serve precomputed aggregates or read models.
+- Improve performance for known access patterns.
+
+**Trade-offs:** More storage, duplicated facts, update anomalies, and extra consistency work. Measure first; do not denormalize blindly.
+
+Common examples include materialized views, cached aggregates, and CQRS read models.
+
+### 5.8 Referential Integrity
+**Meaning:** A foreign-key value must match a referenced key in the parent table, unless the FK column is `NULL` and nullable.
+
+PostgreSQL example:
+
+```sql
+CREATE TABLE departments (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE employees (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  department_id BIGINT,
+  CONSTRAINT fk_department
+    FOREIGN KEY (department_id)
+    REFERENCES departments(id)
+    ON DELETE SET NULL
+);
+```
+
+Common FK actions:
+- `CASCADE`: propagate the parent update/delete to referencing rows.
+- `SET NULL`: set the referencing FK column to `NULL`.
+- `SET DEFAULT`: set it to its default value (which must still satisfy the constraint).
+- `RESTRICT`: prevent the referenced row from being deleted/updated while references exist.
+- `NO ACTION`: check the constraint at its normal check time; it may be deferrable.
+
+**Index note:** PostgreSQL automatically indexes primary/unique referenced keys, but does not automatically index the referencing FK column. Add an index when joins or parent-row updates/deletes make it useful:
+
+```sql
+CREATE INDEX idx_employees_department_id
+ON employees(department_id);
+```
+
+### Normal Forms — Final Comparison
+
+| Normal form | What it prevents | Core test |
+|---|---|---|
+| 1NF | Repeating groups / non-atomic cells | One value per cell |
+| 2NF | Partial dependency | A non-prime attribute must not depend on only part of a candidate key |
+| 3NF | Disallowed transitive dependencies | For every non-trivial FD X → A, X is a superkey or A is prime |
+| BCNF | Non-superkey determinants | For every non-trivial FD X → Y, X is a superkey |
+
+Implication: `BCNF ⇒ 3NF ⇒ 2NF ⇒ 1NF`. The reverse implications do not generally hold.
 
 ### Normalization quick view
 
