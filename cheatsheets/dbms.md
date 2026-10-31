@@ -13,7 +13,9 @@
 - [Redis — Data Types](https://redis.io/docs/latest/develop/data-types/)
 - [Cassandra — Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html)
 - [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
-- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)\n- [PostgreSQL — Constraints and Referential Integrity](https://www.postgresql.org/docs/current/ddl-constraints.html)\n- [Database System Concepts — Functional Dependencies and Normalization (Silberschatz, Korth, Sudarshan)](https://www.db-book.com/)
+- [PostgreSQL — Aggregate Functions](https://www.postgresql.org/docs/current/functions-aggregate.html)
+- [PostgreSQL — Constraints and Referential Integrity](https://www.postgresql.org/docs/current/ddl-constraints.html)
+- [Database System Concepts — Functional Dependencies and Normalization (Silberschatz, Korth, Sudarshan)](https://www.db-book.com/)
 
 ## Contents
 1. [Database and DBMS](#1-database-and-dbms)
@@ -208,7 +210,7 @@ RETURN u.name, t.title;
 
 **Key idea:** Relational databases use keys and joins; document databases embed or reference; key-value applications connect keys in application logic; graph databases connect nodes with edges.
 
-## 5. Normalization: 1NF, 2NF, 3NF
+## 5. Normalization: 1NF, 2NF, 3NF, BCNF
 
 **Purpose:** Organize relational tables to reduce unnecessary duplication and prevent insert, update, and delete anomalies.
 
@@ -273,7 +275,7 @@ Split into:
 
 
 ### 5.4 BCNF (Boyce–Codd Normal Form)
-**Rule:** For every non-trivial functional dependency (X \to Y), X must be a superkey.
+**Rule:** For every non-trivial functional dependency `X → Y`, X must be a superkey.
 
 A **determinant** is the attribute (or attribute set) on the left side of a functional dependency.
 
@@ -396,11 +398,12 @@ Implication: `BCNF ⇒ 3NF ⇒ 2NF ⇒ 1NF`. The reverse implications do not gen
 
 ### Normalization quick view
 
-| Normal form | Main rule |
-|---|---|
-| 1NF | Atomic values; no repeating groups |
-| 2NF | No partial dependency on a candidate key |
-| 3NF | No transitive dependency of non-key attributes |
+- **1NF:** One atomic value per cell.
+- **2NF:** No partial dependency of a non-prime attribute on a candidate key.
+- **3NF:** For each non-trivial FD `X → A`, X is a superkey or A is a prime attribute.
+- **BCNF:** For each non-trivial FD `X → Y`, X is a superkey.
+
+`BCNF ⇒ 3NF ⇒ 2NF ⇒ 1NF`.
 
 Normalization is primarily taught for relational design. NoSQL systems often use different modeling strategies and may intentionally denormalize data to optimize access patterns.
 
@@ -476,7 +479,13 @@ One database can support both workloads. Larger systems may separate transaction
 - **MongoDB `$lookup`:** JOIN-like aggregation; not a relational FK constraint.
 - **1NF:** Atomic values.
 - **2NF:** No partial dependency on a composite candidate key.
-- **3NF:** No transitive dependency of non-key attributes on candidate keys.
+- **3NF:** For every non-trivial FD `X → A`, X is a superkey or A is prime.
+- **BCNF:** Every determinant of a non-trivial FD is a superkey.
+- **Superkey:** Any attribute set that uniquely identifies a row.
+- **Candidate key:** A minimal superkey.
+- **Functional dependency:** `X → Y` means X determines Y.
+- **Denormalization:** Intentional redundancy for a measured read-performance benefit.
+- **Referential integrity:** Foreign keys keep references valid.
 - **OLTP:** Frequent operational transactions.
 - **OLAP:** Analytical queries and aggregations.
 - **Key distinction:** Relational vs. non-relational describes the data model; OLTP vs. OLAP describes the workload.
